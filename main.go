@@ -94,6 +94,8 @@ func (f *timeFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHandle
 	if fuseFlags&(syscall.O_RDWR|syscall.O_WRONLY) != 0 {
 		return nil, 0, syscall.EROFS
 	}
+
+	podDef, err := getPodDefinition(cli, f.name)
 	if err != nil {
 		return nil,0, syscall.EROFS
 	}
