@@ -4,30 +4,39 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"path/filepath"
 
+	kube_errors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
 )
 
-func getPods(cli *kubernetes.Clientset) []string {
-	pods, err := cli.CoreV1().Pods("default").List(context.TODO(), metav1.ListOptions{})
+var (
+	ErrNotFound = fmt.Errorf("object not found")
+)
+
+func getPods(ctx context.Context, cli *kubernetes.Clientset, namespace string) ([]string, error) {
+	pods, err := cli.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
-		panic(err.Error())
+		return nil, err
 	}
 
 	rv := make([]string, len(pods.Items))
 
-	for _, p := range pods.Items {
-		rv = append(rv, p.Name)
+	for i, p := range pods.Items {
+		rv[i] = p.Name
 	}
-	return rv
+	return rv, nil
 }
 
-func getPodDefinition(cli *kubernetes.Clientset, name string) ([]byte, error) {
-	pod, err := cli.CoreV1().Pods("default").Get(context.TODO(), name, metav1.GetOptions{})
+func getPodDefinition(ctx context.Context, cli *kubernetes.Clientset, name, namespace string) ([]byte, error) {
+	pod, err := cli.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
+	if kube_errors.IsNotFound(err) {
+		return nil, ErrNotFound
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -37,6 +46,19 @@ func getPodDefinition(cli *kubernetes.Clientset, name string) ([]byte, error) {
 		return nil, err
 	}
 	return b, nil
+}
+
+func getNamespaces(ctx context.Context, cli *kubernetes.Clientset) ([]string, error) {
+	namespaces, err := cli.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	rv := make([]string, len(namespaces.Items))
+
+	for i, ns := range namespaces.Items {
+		rv[i] = ns.Name
+	}
+	return rv, nil
 }
 
 func getK8sClient() *kubernetes.Clientset {

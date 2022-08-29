@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
+	"errors"
 	"log"
 	"syscall"
 
@@ -19,6 +20,7 @@ type fsNode struct {
 	fs.Inode
 
 	name string
+	namespace string
 }
 
 // Ensure we are implementing the NodeReaddirer interface
@@ -28,7 +30,10 @@ var _ = (fs.NodeReaddirer)((*fsNode)(nil))
 func (n *fsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	fmt.Printf("READDIR: %#v\n", ctx)
 
-	pods := getPods(cli)
+	pods, err := getPods(ctx, cli, n.namespace)
+	if err != nil {
+		panic(err)
+	}
 
 	entries := make([]fuse.DirEntry, 0, len(pods))
 	for i, p := range(pods) {
@@ -46,14 +51,16 @@ func (n *fsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 
 
 func (n *fsNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	fmt.Printf("LOOKUP OF %s \n", name)
-	if name != "vpa-recommender-6968b769d9-z9pdz" {
-		return nil, syscall.ENOENT
-	}
+	fmt.Printf("LOOKUP OF %s -- %#v' \n", name, n)
 
+	// TODO Rc we need to parse the path here to get the namespace?
+	// might work on absolute paths but will it work on relative paths?
 	ch := n.NewInode(
 		ctx,
-		&timeFile{name: name},
+		&timeFile{
+			name: name,
+			namespace: n.namespace,
+		},
 		fs.StableAttr{Mode: syscall.S_IFREG},
 	)
 
@@ -84,6 +91,7 @@ func (fh *bytesFileHandle) Read(ctx context.Context, dest []byte, off int64) (fu
 type timeFile struct {
 	fs.Inode
 	name string
+	namespace string
 }
 
 // timeFile implements Open
@@ -95,7 +103,10 @@ func (f *timeFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHandle
 		return nil, 0, syscall.EROFS
 	}
 
-	podDef, err := getPodDefinition(cli, f.name)
+	podDef, err := getPodDefinition(ctx, cli, f.name, f.namespace)
+	if errors.Is(err, ErrNotFound) {
+		return nil, 0, syscall.ENOENT
+	}
 	if err != nil {
 		return nil,0, syscall.EROFS
 	}
@@ -118,7 +129,7 @@ func main() {
 	}
 	fmt.Printf("\nMOUNT AT : %v\n", mntDir)
 
-	root := &fsNode{}
+	root := &fsNode{namespace: "default"}
 	server, err := fs.Mount(mntDir, root, &fs.Options{
 		MountOptions: fuse.MountOptions{
 			Debug: true,
