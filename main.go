@@ -84,6 +84,11 @@ func (n *rootNSObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.
 			Ino: uint64(9900+rand.Intn(100)),
 			Mode: fuse.S_IFDIR,
 		},
+		{
+			Name: "deployments",
+			Ino: uint64(9900+rand.Intn(100)),
+			Mode: fuse.S_IFDIR,
+		},
 	}
 	return fs.NewListDirStream(entries), 0
 }
@@ -95,6 +100,16 @@ func (n *rootNSObjectsNode) Lookup(ctx context.Context, name string, out *fuse.E
 		ch := n.NewInode(
 			ctx,
 			&rootPodNode{
+				namespace: n.namespace,
+			},
+			fs.StableAttr{Mode: syscall.S_IFDIR},
+		)
+		return ch, 0
+	} else if name == "deployments" {
+		fmt.Printf("LOOKED UP pods: %s:%s", n.namespace, name)
+		ch := n.NewInode(
+			ctx,
+			&rootDeploymentNode{
 				namespace: n.namespace,
 			},
 			fs.StableAttr{Mode: syscall.S_IFDIR},
@@ -139,7 +154,6 @@ func (n *rootPodNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno)
 	return fs.NewListDirStream(entries), 0
 }
 
-
 func (n *rootPodNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	fmt.Printf("LOOKUP OF %s' \n", name)
 
@@ -147,7 +161,59 @@ func (n *rootPodNode) Lookup(ctx context.Context, name string, out *fuse.EntryOu
 	// might work on absolute paths but will it work on relative paths?
 	ch := n.NewInode(
 		ctx,
-		&timeFile{
+		&podJsonFile{
+			name: name,
+			namespace: n.namespace,
+		},
+		fs.StableAttr{Mode: syscall.S_IFREG},
+	)
+
+	return ch, 0
+}
+
+
+
+type rootDeploymentNode struct {
+	// Must embed an Inode for the struct to work as a node.
+	fs.Inode
+
+	namespace string
+}
+
+// Ensure we are implementing the NodeReaddirer interface
+var _ = (fs.NodeReaddirer)((*rootDeploymentNode)(nil))
+
+// // Readdir is part of the NodeReaddirer interface
+func (n *rootDeploymentNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
+	fmt.Printf("READDIR rootDeploymentNode: %#v\n", ctx)
+
+	pods, err := getDeployments(ctx, cli, n.namespace)
+	if err != nil {
+		panic(err)
+	}
+
+	entries := make([]fuse.DirEntry, 0, len(pods))
+	for i, p := range(pods) {
+		if p == "" {
+			continue
+		}
+		entries = append(entries, fuse.DirEntry{
+			Name: p,
+			Ino: uint64(9900 + rand.Intn(100 + i)),
+			Mode: fuse.S_IFREG,
+		})
+	}
+	return fs.NewListDirStream(entries), 0
+}
+
+func (n *rootDeploymentNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	fmt.Printf("LOOKUP OF deployment %s' \n", name)
+
+	// TODO Rc we need to parse the path here to get the namespace?
+	// might work on absolute paths but will it work on relative paths?
+	ch := n.NewInode(
+		ctx,
+		&deployJsonFile{
 			name: name,
 			namespace: n.namespace,
 		},
@@ -177,17 +243,17 @@ func (fh *bytesFileHandle) Read(ctx context.Context, dest []byte, off int64) (fu
 	return fuse.ReadResultData(fh.content[off:end]), 0
 }
 
-// timeFile is a file that contains the wall clock time as ASCII.
-type timeFile struct {
+// podJsonFile is a file that contains the wall clock time as ASCII.
+type podJsonFile struct {
 	fs.Inode
 	name string
 	namespace string
 }
 
-// timeFile implements Open
-var _ = (fs.NodeOpener)((*timeFile)(nil))
+// podJsonFile implements Open
+var _ = (fs.NodeOpener)((*podJsonFile)(nil))
 
-func (f *timeFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
+func (f *podJsonFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
 	// disallow writes
 	if fuseFlags&(syscall.O_RDWR|syscall.O_WRONLY) != 0 {
 		return nil, 0, syscall.EROFS
@@ -203,6 +269,39 @@ func (f *timeFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHandle
 
 	fh = &bytesFileHandle{
 		content: podDef,
+	}
+
+	// Return FOPEN_DIRECT_IO so content is not cached.
+	return fh, fuse.FOPEN_DIRECT_IO, 0
+}
+
+
+// deployJsonFile is a file that contains the wall clock time as ASCII.
+type deployJsonFile struct {
+	fs.Inode
+	name string
+	namespace string
+}
+
+// deployJsonFile implements Open
+var _ = (fs.NodeOpener)((*deployJsonFile)(nil))
+
+func (f *deployJsonFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
+	// disallow writes
+	if fuseFlags&(syscall.O_RDWR|syscall.O_WRONLY) != 0 {
+		return nil, 0, syscall.EROFS
+	}
+
+	def, err := getDeploymentDefinition(ctx, cli, f.name, f.namespace)
+	if errors.Is(err, ErrNotFound) {
+		return nil, 0, syscall.ENOENT
+	}
+	if err != nil {
+		return nil,0, syscall.EROFS
+	}
+
+	fh = &bytesFileHandle{
+		content: def,
 	}
 
 	// Return FOPEN_DIRECT_IO so content is not cached.

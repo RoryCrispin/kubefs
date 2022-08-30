@@ -32,8 +32,38 @@ func getPods(ctx context.Context, cli *kubernetes.Clientset, namespace string) (
 	return rv, nil
 }
 
+func getDeployments(ctx context.Context, cli *kubernetes.Clientset, namespace string) ([]string, error) {
+	results, err := cli.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	rv := make([]string, len(results.Items))
+
+	for i, p := range results.Items {
+		rv[i] = p.Name
+	}
+	return rv, nil
+}
+
 func getPodDefinition(ctx context.Context, cli *kubernetes.Clientset, name, namespace string) ([]byte, error) {
 	pod, err := cli.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
+	if kube_errors.IsNotFound(err) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	b, err := json.Marshal(pod)
+	if err != nil {
+		return nil, err
+	}
+	return b, nil
+}
+
+func getDeploymentDefinition(ctx context.Context, cli *kubernetes.Clientset, name, namespace string) ([]byte, error) {
+	pod, err := cli.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if kube_errors.IsNotFound(err) {
 		return nil, ErrNotFound
 	}
@@ -83,5 +113,4 @@ func getK8sClient() *kubernetes.Clientset {
 	}
 
 	return clientset
-
 }
