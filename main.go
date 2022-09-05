@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
+	"flag"
 	"log"
 
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -21,13 +22,17 @@ func main() {
 	// clix := getK8sDiscoveryClient()
 	// getApiResources(clix)
 
+	kCtx := flag.String("context", "", "The name of the kubeconfig context to use")
+	flag.Parse()
+
+
 	// genCli := getK8sUnstructuredClient()
 	// getResourcesGeneric(genCli)
 
-	cli = kube.GetK8sClient()
+	cli = kube.GetK8sClient(*kCtx)
 
 	mntDir, err := ioutil.TempDir("", "xoyo")
-	mntDir = "/tmp/kubefs-y"
+	mntDir = "/tmp/kubefs"
 
 	if err != nil {
 		panic(err)

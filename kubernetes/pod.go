@@ -1,9 +1,11 @@
 package kubernetes
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 
+	corev1 "k8s.io/api/core/v1"
 	kube_errors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8s "k8s.io/client-go/kubernetes"
@@ -38,4 +40,30 @@ func GetPodDefinition(ctx context.Context, cli *k8s.Clientset, name, namespace s
 		return nil, err
 	}
 	return b, nil
+}
+
+func GetLogs(ctx context.Context, cli *k8s.Clientset, name, namespace string) ([]byte, error) {
+	return getLogs(ctx, cli, name, namespace, false)
+}
+func GetPreviousLogs(ctx context.Context, cli *k8s.Clientset, name, namespace string) ([]byte, error) {
+	return getLogs(ctx, cli, name, namespace, true)
+}
+
+func getLogs(ctx context.Context, cli *k8s.Clientset, name, namespace string, previous bool) ([]byte, error) {
+
+	rc, err := cli.CoreV1().Pods(namespace).GetLogs(
+		name,
+		 &corev1.PodLogOptions{
+			Previous: previous,
+		 },
+		).Stream(context.TODO())
+	if err != nil {
+		return nil, err
+	}
+
+	defer rc.Close()
+
+	buf := new(bytes.Buffer)
+	buf.ReadFrom(rc)
+	return buf.Bytes(), nil
 }

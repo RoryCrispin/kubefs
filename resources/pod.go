@@ -94,6 +94,7 @@ func (f *PodJSONFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHan
 	}
 
 	podDef, err := kube.GetPodDefinition(ctx, f.cli, f.name, f.namespace)
+	//	podDef, err := kube.GetLogs(ctx, f.cli, f.name, f.namespace)
 	if errors.Is(err, kube.ErrNotFound) {
 		return nil, 0, syscall.ENOENT
 	}

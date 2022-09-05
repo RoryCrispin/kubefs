@@ -13,19 +13,19 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
+	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
+
 )
 
-func GetK8sClient() *kubernetes.Clientset {
-	var kubeconfig *string
-	if home := homedir.HomeDir(); home != "" {
-		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
-	} else {
-		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
-	}
-	flag.Parse()
+func GetK8sClient(kCtx string) *kubernetes.Clientset {
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 
-	// use the current context in kubeconfig
-	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+	configOverrides := &clientcmd.ConfigOverrides{}
+	if kCtx != "" {
+		configOverrides.CurrentContext = kCtx
+	}
+
+	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides).ClientConfig()
 	if err != nil {
 		panic(err.Error())
 	}
