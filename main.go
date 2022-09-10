@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"io/ioutil"
-	"flag"
+	// "flag"
 	"log"
 
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -21,15 +21,23 @@ var cli *kubernetes.Clientset
 func main() {
 	// clix := getK8sDiscoveryClient()
 	// getApiResources(clix)
+	//
+	contexts, err := kube.GetK8sContexts()
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("%v", contexts)
+	// panic("exit")				//
 
-	kCtx := flag.String("context", "", "The name of the kubeconfig context to use")
-	flag.Parse()
+	// kCtx := flag.String("context", "", "The name of the kubeconfig context to use")
+	// flag.Parse()
 
 
 	// genCli := getK8sUnstructuredClient()
 	// getResourcesGeneric(genCli)
 
-	cli = kube.GetK8sClient(*kCtx)
+	// cli, err = kube.GetK8sClient(*kCtx)
+	// if err != nil
 
 	mntDir, err := ioutil.TempDir("", "xoyo")
 	mntDir = "/tmp/kubefs"
@@ -39,7 +47,7 @@ func main() {
 	}
 	fmt.Printf("\nMOUNT AT : %v\n", mntDir)
 
-	root := resources.NewRootNSNode(cli)
+	root := &resources.RootContextNode{}
 
 	server, err := fs.Mount(mntDir, root, &fs.Options{
 		MountOptions: fuse.MountOptions{

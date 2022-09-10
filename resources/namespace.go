@@ -22,6 +22,7 @@ type RootNSNode struct {
 	fs.Inode
 
 	cli *k8s.Clientset
+	contextName string
 }
 
 func NewRootNSNode(cli *k8s.Clientset) *RootNSNode {
@@ -30,13 +31,38 @@ func NewRootNSNode(cli *k8s.Clientset) *RootNSNode {
 
 var _ = (fs.NodeReaddirer)((*RootNSNode)(nil))
 
+func (n *RootNSNode) ensureClientSet() error {
+	if n.cli != nil {
+		return nil
+	}
+	cli, err := kube.GetK8sClient(n.contextName)
+	if err != nil {
+		return err
+	}
+	n.cli = cli
+	return nil
+}
+
 // // Readdir is part of the NodeReaddirer interface
 func (n *RootNSNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	fmt.Printf("READDIR: %#v\n", ctx)
+	err := n.ensureClientSet()
+	if err != nil {
+		panic(err)
+	}
 
 	results, err := kube.GetNamespaces(ctx, n.cli)
 	if err != nil {
-		panic(err)
+		// The filesystem is our interface with the user, so let
+		// errors here be exposed via said interface.
+		entries := []fuse.DirEntry{
+			{
+				Name: "error",
+				Ino:  uint64(9900 + rand.Intn(100)),
+				Mode: fuse.S_IFREG,
+			},
+		}
+		return fs.NewListDirStream(entries), 0
 	}
 
 	entries := make([]fuse.DirEntry, 0, len(results))
@@ -55,14 +81,17 @@ func (n *RootNSNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) 
 
 func (n *RootNSNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	fmt.Printf("LOOKUP OF RootNSNode %s' \n", name)
+	err := n.ensureClientSet()
+	if err != nil {
+		panic(err)
+	}
 
 	// TODO Rc we need to parse the path here to get the namespace?
 	// might work on absolute paths but will it work on relative paths?
 	ch := n.NewInode(
 		ctx,
 		// TODO RC inject a layer here where we expose different resources
-		&RootNSObjectsNode{
-			namespace: name,
+		&RootNSNode{
 
 			cli: n.cli,
 		},

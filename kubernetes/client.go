@@ -17,7 +17,34 @@ import (
 
 )
 
-func GetK8sClient(kCtx string) *kubernetes.Clientset {
+type void struct{}
+var member void
+
+func GetK8sContexts() ([]string, error) {
+	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
+
+	configOverrides := &clientcmd.ConfigOverrides{}
+
+	config:= clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides).ConfigAccess()
+	starting, err := config.GetStartingConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	contexts := make(map[string]void)
+	out := []string{}
+
+	for name := range starting.Contexts {
+		_, exists := contexts[name]
+		if !exists {
+			out = append(out, name)
+		}
+		contexts[name] = member
+	}
+	return out, nil
+}
+
+func GetK8sClient(kCtx string) (*kubernetes.Clientset, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 
 	configOverrides := &clientcmd.ConfigOverrides{}
@@ -27,16 +54,16 @@ func GetK8sClient(kCtx string) *kubernetes.Clientset {
 
 	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides).ClientConfig()
 	if err != nil {
-		panic(err.Error())
+		return nil, err
 	}
 
 	// create the clientset
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
-		panic(err.Error())
+		return nil, err
 	}
 
-	return clientset
+	return clientset, nil
 }
 
 func getK8sUnstructuredClient() dynamic.Interface {
