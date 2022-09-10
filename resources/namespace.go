@@ -91,8 +91,8 @@ func (n *RootNSNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut
 	ch := n.NewInode(
 		ctx,
 		// TODO RC inject a layer here where we expose different resources
-		&RootNSNode{
-
+		&RootNSObjectsNode{
+			namespace: name,
 			cli: n.cli,
 		},
 		fs.StableAttr{Mode: syscall.S_IFDIR},
