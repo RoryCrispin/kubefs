@@ -86,11 +86,8 @@ func (n *RootNSNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut
 		panic(err)
 	}
 
-	// TODO Rc we need to parse the path here to get the namespace?
-	// might work on absolute paths but will it work on relative paths?
 	ch := n.NewInode(
 		ctx,
-		// TODO RC inject a layer here where we expose different resources
 		&RootNSObjectsNode{
 			namespace: name,
 			cli: n.cli,
@@ -114,7 +111,6 @@ type RootNSObjectsNode struct {
 // Ensure we are implementing the NodeReaddirer interface
 var _ = (fs.NodeReaddirer)((*RootNSObjectsNode)(nil))
 
-// // Readdir is part of the NodeReaddirer interface
 func (n *RootNSObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	fmt.Printf("READDIR RootNSObjectsNode: ns: %s %#v\n", n.namespace, ctx)
 

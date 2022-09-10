@@ -51,7 +51,7 @@ func main() {
 
 	server, err := fs.Mount(mntDir, root, &fs.Options{
 		MountOptions: fuse.MountOptions{
-			Debug: true,
+			Debug: false,
 		},
 	})
 	if err != nil {

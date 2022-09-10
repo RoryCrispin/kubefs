@@ -25,12 +25,19 @@ func GetPods(ctx context.Context, cli *k8s.Clientset, namespace string) ([]strin
 	}
 	return rv, nil
 }
-
-func GetPodDefinition(ctx context.Context, cli *k8s.Clientset, name, namespace string) ([]byte, error) {
+func getPod(ctx context.Context, cli *k8s.Clientset, name, namespace string) (*corev1.Pod, error) {
 	pod, err := cli.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
 	if kube_errors.IsNotFound(err) {
 		return nil, ErrNotFound
 	}
+	if err != nil {
+		return nil, err
+	}
+	return pod, nil
+}
+
+func GetPodDefinition(ctx context.Context, cli *k8s.Clientset, name, namespace string) ([]byte, error) {
+	pod, err := getPod(ctx, cli, name, namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -42,21 +49,36 @@ func GetPodDefinition(ctx context.Context, cli *k8s.Clientset, name, namespace s
 	return b, nil
 }
 
-func GetLogs(ctx context.Context, cli *k8s.Clientset, name, namespace string) ([]byte, error) {
-	return getLogs(ctx, cli, name, namespace, false)
-}
-func GetPreviousLogs(ctx context.Context, cli *k8s.Clientset, name, namespace string) ([]byte, error) {
-	return getLogs(ctx, cli, name, namespace, true)
+func GetContainers(ctx context.Context, cli *k8s.Clientset, podName, namespace string) ([]string, error) {
+	pod, err := getPod(ctx, cli, podName, namespace)
+	if err != nil {
+		return nil, err
+	}
+	rv := make([]string, len(pod.Spec.Containers))
+	for _, c := range pod.Spec.Containers {
+		rv = append(rv, c.Name)
+	}
+	return rv, nil
 }
 
-func getLogs(ctx context.Context, cli *k8s.Clientset, name, namespace string, previous bool) ([]byte, error) {
+func GetLogs(ctx context.Context, cli *k8s.Clientset, pod, container, namespace string) ([]byte, error) {
+	return getLogs(ctx, cli, pod, container, namespace, false)
+}
+func GetPreviousLogs(ctx context.Context, cli *k8s.Clientset, pod, container, namespace string) ([]byte, error) {
+	return getLogs(ctx, cli, pod, container, namespace, true)
+}
 
+func getLogs(ctx context.Context, cli *k8s.Clientset, pod, container, namespace string, previous bool) ([]byte, error) {
 	rc, err := cli.CoreV1().Pods(namespace).GetLogs(
-		name,
+		pod,
 		 &corev1.PodLogOptions{
-			Previous: previous,
+			 Container: container,
+			 Previous: previous,
 		 },
-		).Stream(context.TODO())
+		).Stream(ctx)
+	if kube_errors.IsNotFound(err) {
+		return nil, ErrNotFound
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -67,3 +89,4 @@ func getLogs(ctx context.Context, cli *k8s.Clientset, name, namespace string, pr
 	buf.ReadFrom(rc)
 	return buf.Bytes(), nil
 }
+
