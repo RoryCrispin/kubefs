@@ -84,11 +84,6 @@ func (n *RootPodObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall
 
 	entries := []fuse.DirEntry{
 		{
-			Name: "logs",
-			Ino:  uint64(9900 + rand.Intn(100)),
-			Mode: fuse.S_IFREG,
-		},
-		{
 			Name: "containers",
 			Ino:  uint64(9900 + rand.Intn(100)),
 			Mode: fuse.S_IFDIR,
@@ -104,20 +99,7 @@ func (n *RootPodObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall
 
 func (n *RootPodObjectsNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	fmt.Printf("LOOKUP OF %s on RootPodObjectsNode: %s' \n", name, n.namespace)
-	if name == "logs" {
-		fmt.Printf("LOOKED UP logs: %s:%s\n", n.namespace, n.name)
-		ch := n.NewInode(
-			ctx,
-			&ContainerLogsFile{
-				name: n.name,
-				namespace: n.namespace,
-
-				cli: n.cli,
-			},
-			fs.StableAttr{Mode: syscall.S_IFREG},
-		)
-		return ch, 0
-	} else if name == "json" {
+	if name == "json" {
 		fmt.Printf("LOOKED UP json: %s:%s\n", n.namespace, n.name)
 		ch := n.NewInode(
 			ctx,
