@@ -1,0 +1,9 @@
+#+title: Bugs
+
+
+* Don't effectively report the status of pods in errors
+for example - when running an exec on an ImagePullBackoff pod, the container is just 'not found'
+
+
+* Doesn't respond to interrupts
+ - would be good to cancel an exec when the write is interrupted

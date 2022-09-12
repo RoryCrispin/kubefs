@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/rand"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -19,8 +18,16 @@ type RootPodNode struct {
 	fs.Inode
 
 	namespace string
+	contextName string
 
 	cli *k8s.Clientset
+	stateStore map[uint64]interface{}
+}
+
+func (n *RootPodNode) Path() uint64 {
+	return hash(fmt.Sprintf("%v/%v/pods",
+		n.contextName, n.namespace,
+	))
 }
 
 // Ensure we are implementing the NodeReaddirer interface
@@ -36,13 +43,13 @@ func (n *RootPodNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno)
 	}
 
 	entries := make([]fuse.DirEntry, 0, len(pods))
-	for i, p := range pods {
+	for _, p := range pods {
 		if p == "" {
 			continue
 		}
 		entries = append(entries, fuse.DirEntry{
 			Name: p,
-			Ino:  uint64(9900 + rand.Intn(100+i)),
+			Ino: hash(fmt.Sprintf("%v/%v", n.Path(), p)),
 			Mode: fuse.S_IFREG,
 		})
 	}
@@ -55,11 +62,16 @@ func (n *RootPodNode) Lookup(ctx context.Context, name string, out *fuse.EntryOu
 	ch := n.NewInode(
 		ctx,
 		&RootPodObjectsNode{
-			namespace: n.namespace,
 			name: name,
+			namespace: n.namespace,
+			contextName: n.contextName,
 			cli: n.cli,
+			stateStore: n.stateStore,
 		},
-		fs.StableAttr{Mode: syscall.S_IFDIR},
+		fs.StableAttr{
+			Mode: syscall.S_IFDIR,
+			Ino: hash(fmt.Sprintf("%v/%v", n.Path(), name)),
+		},
 	)
 	return ch, 0
 }
@@ -72,8 +84,16 @@ type RootPodObjectsNode struct {
 
 	namespace string
 	name string
+	contextName string
 
 	cli *k8s.Clientset
+	stateStore map[uint64]interface{}
+}
+
+func (n *RootPodObjectsNode) Path() uint64 {
+	return hash(fmt.Sprintf("%v/%v/pods/%v",
+		n.contextName, n.namespace, n.name,
+	))
 }
 
 // Ensure we are implementing the NodeReaddirer interface
@@ -85,12 +105,12 @@ func (n *RootPodObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall
 	entries := []fuse.DirEntry{
 		{
 			Name: "containers",
-			Ino:  uint64(9900 + rand.Intn(100)),
+			Ino: hash(fmt.Sprintf("%v/containers", n.Path())),
 			Mode: fuse.S_IFDIR,
 		},
 		{
 			Name: "json",
-			Ino:  uint64(9900 + rand.Intn(100)),
+			Ino: hash(fmt.Sprintf("%v/json", n.Path())),
 			Mode: fuse.S_IFREG,
 		},
 	}
@@ -106,10 +126,15 @@ func (n *RootPodObjectsNode) Lookup(ctx context.Context, name string, out *fuse.
 			&PodJSONFile{
 				name: n.name,
 				namespace: n.namespace,
+				contextName: n.contextName,
 
 				cli: n.cli,
+				stateStore: n.stateStore,
 			},
-			fs.StableAttr{Mode: syscall.S_IFREG},
+			fs.StableAttr{
+				Mode: syscall.S_IFREG,
+				Ino: hash(fmt.Sprintf("%v/json", n.Path())),
+			},
 		)
 		return ch, 0
 	} else if name == "containers" {
@@ -119,14 +144,19 @@ func (n *RootPodObjectsNode) Lookup(ctx context.Context, name string, out *fuse.
 			&RootContainerNode{
 				pod: n.name,
 				namespace: n.namespace,
+				contextName: n.contextName,
 
 				cli: n.cli,
+				stateStore: n.stateStore,
 			},
-			fs.StableAttr{Mode: syscall.S_IFDIR},
+			fs.StableAttr{
+				Mode: syscall.S_IFDIR,
+				Ino: hash(fmt.Sprintf("%v/containers", n.Path())),
+			},
 		)
 		return ch, 0
 	} else {
-		fmt.Printf("RootPodObjects lookup of unrecognised object type %v, %s", name, name)
+		fmt.Printf("RootPodObjects lookup of unrecognised object type %v, %s\n", name, name)
 		return nil, syscall.ENOENT
 	}
 }
@@ -138,16 +168,10 @@ type PodJSONFile struct {
 	fs.Inode
 	name      string
 	namespace string
+	contextName string
 
 	cli *k8s.Clientset
-}
-
-func NewPodJSONFile(name, namespace string, cli *k8s.Clientset) *PodJSONFile{
-	return &PodJSONFile{
-		name: name, 
-		namespace: namespace, 
-		cli: cli,
-	}
+	stateStore map[uint64]interface{}
 }
 
 // PodJSONFile implements Open
@@ -164,14 +188,14 @@ func (f *PodJSONFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHan
 		return nil, 0, syscall.ENOENT
 	}
 	if err != nil {
-		fh = &bytesFileHandle{
+		fh = &roBytesFileHandle{
 			content: []byte(fmt.Sprintf("%#v", err)),
 		}
 		return fh, fuse.FOPEN_DIRECT_IO, 0
 	}
 
 
-	fh = &bytesFileHandle{
+	fh = &roBytesFileHandle{
 		content: podDef,
 	}
 

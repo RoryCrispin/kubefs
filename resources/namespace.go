@@ -3,7 +3,6 @@ package resources
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -21,12 +20,16 @@ type RootNSNode struct {
 	// Must embed an Inode for the struct to work as a node.
 	fs.Inode
 
-	cli *k8s.Clientset
 	contextName string
+
+	cli *k8s.Clientset
+	stateStore map[uint64]interface{}
 }
 
-func NewRootNSNode(cli *k8s.Clientset) *RootNSNode {
-	return &RootNSNode{cli:cli}
+func (n *RootNSNode) Path() string {
+	return fmt.Sprintf("%v",
+		n.contextName,
+	)
 }
 
 var _ = (fs.NodeReaddirer)((*RootNSNode)(nil))
@@ -58,7 +61,7 @@ func (n *RootNSNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) 
 		entries := []fuse.DirEntry{
 			{
 				Name: "error",
-				Ino:  uint64(9900 + rand.Intn(100)),
+				Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), "error")),
 				Mode: fuse.S_IFREG,
 			},
 		}
@@ -66,13 +69,13 @@ func (n *RootNSNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) 
 	}
 
 	entries := make([]fuse.DirEntry, 0, len(results))
-	for i, p := range results {
+	for _, p := range results {
 		if p == "" {
 			continue
 		}
 		entries = append(entries, fuse.DirEntry{
 			Name: p,
-			Ino:  uint64(9900 + rand.Intn(100+i)),
+			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), p)),
 			Mode: fuse.S_IFDIR,
 		})
 	}
@@ -83,6 +86,7 @@ func (n *RootNSNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut
 	fmt.Printf("LOOKUP OF RootNSNode %s' \n", name)
 	err := n.ensureClientSet()
 	if err != nil {
+		// TODO rc return err
 		panic(err)
 	}
 
@@ -90,9 +94,15 @@ func (n *RootNSNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut
 		ctx,
 		&RootNSObjectsNode{
 			namespace: name,
+			contextName: n.contextName,
+
 			cli: n.cli,
+			stateStore: n.stateStore,
 		},
-		fs.StableAttr{Mode: syscall.S_IFDIR},
+		fs.StableAttr{
+			Mode: syscall.S_IFDIR,
+			Ino: hash(fmt.Sprintf("%v/%v", n.Path(), name)),
+		},
 	)
 	return ch, 0
 }
@@ -104,8 +114,16 @@ type RootNSObjectsNode struct {
 	fs.Inode
 
 	namespace string
+	contextName string
 
 	cli *k8s.Clientset
+	stateStore map[uint64]interface{}
+}
+
+func (n *RootNSObjectsNode) Path() string {
+	return fmt.Sprintf("%v/%v",
+		n.contextName, n.namespace,
+	)
 }
 
 // Ensure we are implementing the NodeReaddirer interface
@@ -117,12 +135,12 @@ func (n *RootNSObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.
 	entries := []fuse.DirEntry{
 		{
 			Name: "pods",
-			Ino:  uint64(9900 + rand.Intn(100)),
+			Ino:  hash(fmt.Sprintf("%v/pods", n.Path())),
 			Mode: fuse.S_IFDIR,
 		},
 		{
 			Name: "deployments",
-			Ino:  uint64(9900 + rand.Intn(100)),
+			Ino:  hash(fmt.Sprintf("%v/deployments", n.Path())),
 			Mode: fuse.S_IFDIR,
 		},
 	}
@@ -132,31 +150,41 @@ func (n *RootNSObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.
 func (n *RootNSObjectsNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	fmt.Printf("LOOKUP OF %s on NSOBJECTSNODE: %s' \n", name, n.namespace)
 	if name == "pods" {
-		fmt.Printf("LOOKED UP pods: %s:%s", n.namespace, name)
+		fmt.Printf("LOOKED UP pods: %s:%s\n", n.namespace, name)
 		ch := n.NewInode(
 			ctx,
 			&RootPodNode{
 				namespace: n.namespace,
+				contextName: n.contextName,
 
 				cli: n.cli,
+				stateStore: n.stateStore,
 			},
-			fs.StableAttr{Mode: syscall.S_IFDIR},
+			fs.StableAttr{
+				Mode: syscall.S_IFDIR,
+				Ino: hash(fmt.Sprintf("%v/deployments", n.Path())),
+			},
 		)
 		return ch, 0
 	} else if name == "deployments" {
-		fmt.Printf("LOOKED UP pods: %s:%s", n.namespace, name)
+		fmt.Printf("LOOKED UP pods: %s:%s\n", n.namespace, name)
 		ch := n.NewInode(
 			ctx,
 			&RootDeploymentNode{
 				namespace: n.namespace,
+				contextName: n.contextName,
 
-				cli: n.cli, 
+				cli: n.cli,
+				stateStore: n.stateStore,
 			},
-			fs.StableAttr{Mode: syscall.S_IFDIR},
+			fs.StableAttr{
+				Mode: syscall.S_IFDIR,
+				Ino: hash(fmt.Sprintf("%v/deployments", n.Path())),
+			},
 		)
 		return ch, 0
 	} else {
-		fmt.Printf("RootNSObjects lookup of unrecognised object type %v, %s", name, name)
-		return nil, syscall.EROFS
+		fmt.Printf("RootNSObjects lookup of unrecognised object type %v, %s\n", name, name)
+		return nil, syscall.ENOENT
 	}
 }

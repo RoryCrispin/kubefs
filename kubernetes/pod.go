@@ -1,14 +1,21 @@
 package kubernetes
 
 import (
+	"fmt"
 	"bytes"
 	"context"
+	spdyStream "k8s.io/apimachinery/pkg/util/httpstream/spdy"
+	"crypto/tls"
 	"encoding/json"
 
 	corev1 "k8s.io/api/core/v1"
 	kube_errors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/kubernetes"
 	k8s "k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/remotecommand"
+	"k8s.io/client-go/kubernetes/scheme"
 )
 
 
@@ -90,3 +97,60 @@ func getLogs(ctx context.Context, cli *k8s.Clientset, pod, container, namespace 
 	return buf.Bytes(), nil
 }
 
+func ExecCommand(ctx context.Context, contextName, pod, container, namespace string, cmd []string) ([]byte, []byte, error) {
+	fmt.Printf("Exec: ctx: %v pod %v container %v namespace %v cmd %v\n", contextName, pod, container, namespace, cmd)
+
+	if contextName != "microk8s" {
+		panic("disabling exec on real cluster!")
+	}
+	config, err := GetK8sClientConfig(contextName)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	cli, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	req := cli.CoreV1().RESTClient().
+		Post().
+		Resource("pods").
+		Name(pod).
+		Namespace(namespace).
+		SubResource("exec").
+		Param("container", container).
+		VersionedParams(&corev1.PodExecOptions{
+			Command: cmd,
+			Container: container,
+			Stdin: false,
+			Stdout: true,
+			Stderr: true,
+			TTY: false,
+		}, scheme.ParameterCodec)
+
+	upgrader := spdyStream.NewRoundTripper(&tls.Config{InsecureSkipVerify: true})
+	wrapper, err := rest.HTTPWrappersForConfig(config, upgrader)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed creating SPDY upgrade wrapper: %w", err)
+	}
+
+	exec, err := remotecommand.NewSPDYExecutorForTransports(wrapper, upgrader, "POST", req.URL())
+	if err != nil {
+		return nil, nil, err
+	}
+	var stdoutBuf, stderrBuf bytes.Buffer
+	err = exec.Stream(remotecommand.StreamOptions{
+		Stdin: nil,
+		Stdout: &stdoutBuf,
+		Stderr: &stderrBuf,
+		Tty: false,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	so := stdoutBuf.String()
+	fmt.Printf("%v %v :: %v\n",so, stdoutBuf.String(), stderrBuf.String())
+
+	return stdoutBuf.Bytes(), stderrBuf.Bytes(), err
+}

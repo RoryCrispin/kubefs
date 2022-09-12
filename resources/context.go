@@ -3,12 +3,10 @@ package resources
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	k8s "k8s.io/client-go/kubernetes"
 
 	kube "rorycrispin.co.uk/kubefs/kubernetes"
 )
@@ -18,10 +16,20 @@ import (
 type RootContextNode struct {
 	// Must embed an Inode for the struct to work as a node.
 	fs.Inode
+
+	stateStore *map[uint64]interface{}
 }
 
-func NewRootContextNode(cli *k8s.Clientset) *RootContextNode {
-	return &RootContextNode{}
+func (n *RootContextNode) Path() string {
+	return ""
+}
+
+func NewRootContextNode() *RootContextNode {
+	fmt.Printf(">>> Creating new statestore\n")
+	s := make(map[uint64]interface{})
+	return &RootContextNode{
+		stateStore: &s,
+	}
 }
 
 var _ = (fs.NodeReaddirer)((*RootContextNode)(nil))
@@ -36,13 +44,13 @@ func (n *RootContextNode) Readdir(_ context.Context) (fs.DirStream, syscall.Errn
 	}
 
 	entries := make([]fuse.DirEntry, 0, len(results))
-	for i, p := range results {
+	for _, p := range results {
 		if p == "" {
 			continue
 		}
 		entries = append(entries, fuse.DirEntry{
 			Name: p,
-			Ino:  uint64(9900 + rand.Intn(100+i)),
+			Ino: hash(p),
 			Mode: fuse.S_IFDIR,
 		})
 	}
@@ -56,8 +64,12 @@ func (n *RootContextNode) Lookup(ctx context.Context, name string, out *fuse.Ent
 		ctx,
 		&RootContextObjectsNode{
 			name: name,
+			stateStore: *n.stateStore,
 		},
-		fs.StableAttr{Mode: syscall.S_IFDIR},
+		fs.StableAttr{
+			Mode: syscall.S_IFDIR,
+			Ino: hash(name),
+		},
 	)
 	return ch, 0
 }
@@ -69,6 +81,11 @@ type RootContextObjectsNode struct {
 	fs.Inode
 
 	name string
+	stateStore map[uint64]interface{}
+}
+
+func (n *RootContextObjectsNode) Path() string {
+	return n.name
 }
 
 // Ensure we are implementing the NodeReaddirer interface
@@ -81,12 +98,12 @@ func (n *RootContextObjectsNode) Readdir(ctx context.Context) (fs.DirStream, sys
 	entries := []fuse.DirEntry{
 		{
 			Name: "namespaces",
-			Ino:  uint64(9900 + rand.Intn(100)),
+			Ino: hash(fmt.Sprintf("%v/namespaces", n.Path())),
 			Mode: fuse.S_IFDIR,
 		},
 		{
 			Name: "config",
-			Ino:  uint64(9900 + rand.Intn(100)),
+			Ino: hash(fmt.Sprintf("%v/config", n.Path())),
 			Mode: fuse.S_IFDIR,
 		},
 	}
@@ -100,8 +117,12 @@ func (n *RootContextObjectsNode) Lookup(ctx context.Context, name string, out *f
 			ctx,
 			&RootNSNode{
 				contextName: n.name,
+				stateStore: n.stateStore,
 			},
-			fs.StableAttr{Mode: syscall.S_IFDIR},
+			fs.StableAttr{
+				Mode: syscall.S_IFDIR,
+				Ino: hash(fmt.Sprintf("%v/namespaces", n.Path())),
+			},
 		)
 		return ch, 0
 	} else if name == "config" {
@@ -109,5 +130,5 @@ func (n *RootContextObjectsNode) Lookup(ctx context.Context, name string, out *f
 	}
 	fmt.Printf("LOOKUP OF %s on Context objects node: %s' \n", name, n.name)
 	fmt.Printf("RootContextObjects lookup of unrecognised object type %v, %s", name, name)
-	return nil, syscall.EROFS
+	return nil, syscall.ENOENT
 }

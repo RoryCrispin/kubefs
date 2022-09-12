@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/rand"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -19,8 +18,16 @@ type RootDeploymentNode struct {
 	fs.Inode
 
 	namespace string
+	contextName string
 
 	cli *k8s.Clientset
+	stateStore map[uint64]interface{}
+}
+
+func (n *RootDeploymentNode) Path() string {
+	return fmt.Sprintf("%v/%v/deployments",
+		n.contextName, n.namespace,
+	)
 }
 
 // Ensure we are implementing the NodeReaddirer interface
@@ -36,13 +43,13 @@ func (n *RootDeploymentNode) Readdir(ctx context.Context) (fs.DirStream, syscall
 	}
 
 	entries := make([]fuse.DirEntry, 0, len(pods))
-	for i, p := range pods {
+	for _, p := range pods {
 		if p == "" {
 			continue
 		}
 		entries = append(entries, fuse.DirEntry{
 			Name: p,
-			Ino:  uint64(9900 + rand.Intn(100+i)),
+			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), p)),
 			Mode: fuse.S_IFREG,
 		})
 	}
@@ -59,22 +66,28 @@ func (n *RootDeploymentNode) Lookup(ctx context.Context, name string, out *fuse.
 		&deployJSONFile{
 			name:      name,
 			namespace: n.namespace,
+			contextName: n.contextName,
 
 			cli: n.cli,
+			stateStore: n.stateStore,
 		},
-		fs.StableAttr{Mode: syscall.S_IFREG},
+		fs.StableAttr{
+			Mode: syscall.S_IFREG,
+			Ino: hash(fmt.Sprintf("%v/name", n.Path())),
+		},
 	)
 
 	return ch, 0
 }
 
-// deployJSONFile is a file that contains the wall clock time as ASCII.
 type deployJSONFile struct {
 	fs.Inode
 	name      string
 	namespace string
+	contextName string
 
 	cli *k8s.Clientset
+	stateStore map[uint64]interface{}
 }
 
 // deployJSONFile implements Open
@@ -91,10 +104,11 @@ func (f *deployJSONFile) Open(ctx context.Context, openFlags uint32) (fh fs.File
 		return nil, 0, syscall.ENOENT
 	}
 	if err != nil {
-		return nil, 0, syscall.EROFS
+		fmt.Printf("Encountered error while getting deployment definition: %v", err)
+		return nil, 0, syscall.ENOENT
 	}
 
-	fh = &bytesFileHandle{
+	fh = &roBytesFileHandle{
 		content: def,
 	}
 

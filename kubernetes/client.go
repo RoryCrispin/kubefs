@@ -9,6 +9,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -44,7 +45,7 @@ func GetK8sContexts() ([]string, error) {
 	return out, nil
 }
 
-func GetK8sClient(kCtx string) (*kubernetes.Clientset, error) {
+func GetK8sClientConfig(kCtx string) (*rest.Config, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 
 	configOverrides := &clientcmd.ConfigOverrides{}
@@ -53,6 +54,15 @@ func GetK8sClient(kCtx string) (*kubernetes.Clientset, error) {
 	}
 
 	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides).ClientConfig()
+	if err != nil {
+		return nil, err
+	}
+	return config, nil
+}
+
+
+func GetK8sClient(kCtx string) (*kubernetes.Clientset, error) {
+	config, err := GetK8sClientConfig(kCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +118,7 @@ func getResourcesGeneric(cli dynamic.Interface) {
 	// if err != nil {
 	// 	panic(err)
 	// }
-	fmt.Printf("%#v", res.Items)
+	fmt.Printf("%#v\n", res.Items)
 }
 
 func getApiResources(cli *discovery.DiscoveryClient) {
