@@ -109,8 +109,13 @@ func (n *RootPodObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall
 			Mode: fuse.S_IFDIR,
 		},
 		{
-			Name: "json",
-			Ino: hash(fmt.Sprintf("%v/json", n.Path())),
+			Name: "def.json",
+			Ino: hash(fmt.Sprintf("%v/def.json", n.Path())),
+			Mode: fuse.S_IFREG,
+		},
+		{
+			Name: "def.yaml",
+			Ino: hash(fmt.Sprintf("%v/def.yaml", n.Path())),
 			Mode: fuse.S_IFREG,
 		},
 	}

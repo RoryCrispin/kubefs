@@ -17,7 +17,7 @@ type RootContextNode struct {
 	// Must embed an Inode for the struct to work as a node.
 	fs.Inode
 
-	stateStore *map[uint64]interface{}
+	stateStore map[uint64]interface{}
 }
 
 func (n *RootContextNode) Path() string {
@@ -28,7 +28,7 @@ func NewRootContextNode() *RootContextNode {
 	fmt.Printf(">>> Creating new statestore\n")
 	s := make(map[uint64]interface{})
 	return &RootContextNode{
-		stateStore: &s,
+		stateStore: s,
 	}
 }
 
@@ -64,7 +64,7 @@ func (n *RootContextNode) Lookup(ctx context.Context, name string, out *fuse.Ent
 		ctx,
 		&RootContextObjectsNode{
 			name: name,
-			stateStore: *n.stateStore,
+			stateStore: n.stateStore,
 		},
 		fs.StableAttr{
 			Mode: syscall.S_IFDIR,
@@ -102,6 +102,11 @@ func (n *RootContextObjectsNode) Readdir(ctx context.Context) (fs.DirStream, sys
 			Mode: fuse.S_IFDIR,
 		},
 		{
+			Name: "resources",
+			Ino: hash(fmt.Sprintf("%v/resources", n.Path())),
+			Mode: fuse.S_IFDIR,
+		},
+		{
 			Name: "config",
 			Ino: hash(fmt.Sprintf("%v/config", n.Path())),
 			Mode: fuse.S_IFDIR,
@@ -122,6 +127,19 @@ func (n *RootContextObjectsNode) Lookup(ctx context.Context, name string, out *f
 			fs.StableAttr{
 				Mode: syscall.S_IFDIR,
 				Ino: hash(fmt.Sprintf("%v/namespaces", n.Path())),
+			},
+		)
+		return ch, 0
+	} else if name == "resources" {
+		ch := n.NewInode(
+			ctx,
+			&RootResourcesNode{
+				contextName: n.name,
+				stateStore: n.stateStore,
+			},
+			fs.StableAttr{
+				Mode: syscall.S_IFDIR,
+				Ino: hash(fmt.Sprintf("%v/resources", n.Path())),
 			},
 		)
 		return ch, 0

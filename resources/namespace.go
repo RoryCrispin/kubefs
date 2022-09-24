@@ -21,6 +21,7 @@ type RootNSNode struct {
 	fs.Inode
 
 	contextName string
+	lastError error
 
 	cli *k8s.Clientset
 	stateStore map[uint64]interface{}
@@ -58,6 +59,7 @@ func (n *RootNSNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) 
 	if err != nil {
 		// The filesystem is our interface with the user, so let
 		// errors here be exposed via said interface.
+		n.lastError = err
 		entries := []fuse.DirEntry{
 			{
 				Name: "error",
@@ -149,7 +151,7 @@ func (n *RootNSObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.
 
 func (n *RootNSObjectsNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	fmt.Printf("LOOKUP OF %s on NSOBJECTSNODE: %s' \n", name, n.namespace)
-	if name == "pods" {
+	if name == "pods" || name == "po" {
 		fmt.Printf("LOOKED UP pods: %s:%s\n", n.namespace, name)
 		ch := n.NewInode(
 			ctx,
@@ -166,7 +168,7 @@ func (n *RootNSObjectsNode) Lookup(ctx context.Context, name string, out *fuse.E
 			},
 		)
 		return ch, 0
-	} else if name == "deployments" {
+	} else if name == "deployments" || name == "deploy" {
 		fmt.Printf("LOOKED UP pods: %s:%s\n", n.namespace, name)
 		ch := n.NewInode(
 			ctx,

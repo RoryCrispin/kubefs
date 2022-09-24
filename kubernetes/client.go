@@ -45,12 +45,12 @@ func GetK8sContexts() ([]string, error) {
 	return out, nil
 }
 
-func GetK8sClientConfig(kCtx string) (*rest.Config, error) {
+func GetK8sClientConfig(contextName string) (*rest.Config, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 
 	configOverrides := &clientcmd.ConfigOverrides{}
-	if kCtx != "" {
-		configOverrides.CurrentContext = kCtx
+	if contextName != "" {
+		configOverrides.CurrentContext = contextName
 	}
 
 	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides).ClientConfig()
@@ -121,44 +121,26 @@ func getResourcesGeneric(cli dynamic.Interface) {
 	fmt.Printf("%#v\n", res.Items)
 }
 
-func getApiResources(cli *discovery.DiscoveryClient) {
+func GetApiResources(cli *discovery.DiscoveryClient) (*[]*metav1.APIResourceList, error){
 
-	apiGroups, apiResourceList, err := cli.ServerGroupsAndResources()
+	apiResourceList, err := cli.ServerPreferredResources()
 	if err != nil {
-		panic(err)
+		return nil, err
 	}
-	for _, apiGroup := range apiGroups {
-		fmt.Printf("Apigroup: %s\n", apiGroup.Name)
-	}
-
-	for _, res := range apiResourceList {
-		fmt.Printf("GroupVersion: %s\n", res.GroupVersion)
-		for _, r := range res.APIResources {
-			fmt.Printf("    ApiResource: %s Version %s\n", r.Name, r.Version)
-		}
-	}
+	return &apiResourceList, nil
 }
 
-func getK8sDiscoveryClient() *discovery.DiscoveryClient {
-	var kubeconfig *string
-	if home := homedir.HomeDir(); home != "" {
-		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
-	} else {
-		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
-	}
-	flag.Parse()
-
-	// use the current context in kubeconfig
-	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+func GetK8sDiscoveryClient(contextName string) (*discovery.DiscoveryClient, error) {
+	config, err := GetK8sClientConfig(contextName)
 	if err != nil {
-		panic(err.Error())
+		return nil, err
 	}
 
 	// create the clientset
 	clientset, err := discovery.NewDiscoveryClientForConfig(config)
 	if err != nil {
-		panic(err.Error())
+		return nil, err
 	}
 
-	return clientset
+	return clientset, nil
 }
