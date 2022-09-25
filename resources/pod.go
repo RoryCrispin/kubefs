@@ -35,7 +35,7 @@ var _ = (fs.NodeReaddirer)((*RootPodNode)(nil))
 
 // // Readdir is part of the NodeReaddirer interface
 func (n *RootPodNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	fmt.Printf("READDIR RootPodNode: %#v\n", ctx)
+	fmt.Printf("READDIR RootPodNode: ctx: %v namespace: %v\n", n.contextName, n.namespace)
 
 	pods, err := kube.GetPods(ctx, n.cli, n.namespace)
 	if err != nil {

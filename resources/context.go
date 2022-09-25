@@ -133,7 +133,7 @@ func (n *RootContextObjectsNode) Lookup(ctx context.Context, name string, out *f
 	} else if name == "resources" {
 		ch := n.NewInode(
 			ctx,
-			&RootResourcesNode{
+			&ResourceTypeNode{
 				contextName: n.name,
 				stateStore: n.stateStore,
 			},

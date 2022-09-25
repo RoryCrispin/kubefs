@@ -124,8 +124,11 @@ func getResourcesGeneric(cli dynamic.Interface) {
 func GetApiResources(cli *discovery.DiscoveryClient) (*[]*metav1.APIResourceList, error){
 
 	apiResourceList, err := cli.ServerPreferredResources()
-	if err != nil {
-		return nil, err
+	if discovery.IsGroupDiscoveryFailedError(err) {
+		fmt.Printf("WARNING: The Kubernetes server has an orphaned API service. Server reports: %s\n", err)
+		fmt.Printf("WARNING: To fix this, kubectl delete apiservice <service-name>\n")
+	} else {
+		return nil, fmt.Errorf("could not get apiVersions from Kubernetes | %w", err)
 	}
 	return &apiResourceList, nil
 }

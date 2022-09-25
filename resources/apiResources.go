@@ -12,10 +12,63 @@ import (
 	kube "rorycrispin.co.uk/kubefs/kubernetes"
 )
 
+
+type ResourceTypeNode struct {
+	fs.Inode
+	contextName string
+
+	stateStore map[uint64]any
+}
+
+func (n *ResourceTypeNode) Path() string {
+	return fmt.Sprintf("%v/resources", n.contextName)
+}
+
+func (n *ResourceTypeNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	if name != "namespaced" && name != "cluster" {
+		fmt.Printf("Lookup of unknwon resource type, %v", name)
+		return nil, syscall.ENOENT
+	}
+	ch := n.NewInode(
+		ctx,
+		&RootResourcesNode{
+			namespaced: name == "namespaced",
+			contextName: n.contextName,
+
+			stateStore: n.stateStore,
+		},
+		fs.StableAttr{
+			Mode: syscall.S_IFDIR,
+			Ino: hash(fmt.Sprintf("%v/%v", n.Path(), name)),
+		},
+	)
+	return ch, 0
+}
+
+
+// // Readdir is part of the NodeReaddirer interface
+func (n *ResourceTypeNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
+	entries := []fuse.DirEntry{
+		{
+			Name: "namespaced",
+			Ino: hash(fmt.Sprintf("%v/namespaces", n.Path())),
+			Mode: fuse.S_IFDIR,
+		},
+		{
+			Name: "cluster",
+			Ino: hash(fmt.Sprintf("%v/resources", n.Path())),
+			Mode: fuse.S_IFDIR,
+		},
+	}
+	return fs.NewListDirStream(entries), 0
+}
+
+
 type RootResourcesNode struct {
 	fs.Inode
 
 	contextName string
+	namespaced bool
 
 	stateStore map[uint64]interface{}
 	err error
@@ -65,10 +118,6 @@ func ensureAPIResources(stateStore map[uint64]any, contextName string) (APIResou
 		for _, grp := range *resp {
 			for i = range(grp.APIResources) {
 				a = &grp.APIResources[i]
-				if !a.Namespaced {
-					fmt.Printf("skipping non namespaced resource %v", a.Name)
-					continue
-				}
 				elem, exists := rv[a.Name]
 				if exists {
 					// TODO RC handle colliding resources
@@ -93,7 +142,8 @@ var _ = (fs.NodeReaddirer)((*RootResourcesNode)(nil))
 func (n *RootResourcesNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	resources, err := ensureAPIResources(n.stateStore, n.contextName)
 	if err != nil {
-		n.err = fmt.Errorf("error while getting k8s client | %w", err)
+		n.err = fmt.Errorf("error while getting API resources | %w", err)
+		fmt.Println(n.err)
 		return fs.NewListDirStream([]fuse.DirEntry{
 			{
 				Name: "error",
@@ -105,6 +155,9 @@ func (n *RootResourcesNode) Readdir(ctx context.Context) (fs.DirStream, syscall.
 	entries := make([]fuse.DirEntry, 0, len(resources))
 
 	for _, res := range resources {
+		if res.Namespaced != n.namespaced {
+			continue
+		}
 		entries = append(entries, fuse.DirEntry{
 			Name: res.ResourceName,
 			Ino: hash(fmt.Sprintf("%v/%v", n.Path(), res.ResourceName)),
@@ -159,8 +212,8 @@ type ResourceNode struct {
 }
 
 func (n *ResourceNode) Path() string {
-	return fmt.Sprintf("%v",
-		n.contextName,
+	return fmt.Sprintf("%v/resources/%v/%v",
+		n.contextName, n.groupVersion.GroupVersion, n.groupVersion.ResourceName,
 	)
 }
 
@@ -221,6 +274,7 @@ func (n *ResourceNode) Lookup(ctx context.Context, name string, out *fuse.EntryO
 
 	ch := n.NewInode(
 		ctx,
+		// TODO rc need to have a new RootObjects for unstructured clients.
 		&RootNSObjectsNode{
 			namespace: name,
 			contextName: n.contextName,
