@@ -527,7 +527,7 @@ func (n *GenericResourceNode) Lookup(ctx context.Context, name string, out *fuse
 			stateStore: n.stateStore,
 		},
 		fs.StableAttr{
-			Mode: fuse.S_IFDIR,
+			Mode: fuse.S_IFREG,
 			Ino: hash(fmt.Sprintf("%v/%v", n.Path(), name)),
 		},
 	)
@@ -553,6 +553,7 @@ type GenericJSONFile struct {
 var _ = (fs.NodeOpener)((*GenericJSONFile)(nil))
 
 func (f *GenericJSONFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
+	fmt.Printf("~~ LOOKUP ON GenericJSONFile, %v\n", f.name)
 	if fuseFlags&(syscall.O_RDWR|syscall.O_WRONLY) != 0 {
 		// disallow writes
 		return nil, 0, syscall.EROFS

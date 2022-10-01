@@ -82,9 +82,7 @@ func getColIndex(colName string, cols *[]metav1.TableColumnDefinition) (int, err
 	return idx, nil
 }
 
-func GetIngressPlaintext()  {
-	ctx := context.TODO()
-	contextName := "eng-instances"
+func GetPlaintextREST(ctx context.Context, contextName, name, groupVersion, resource, namespace string) ([]byte, error) {
 
 	config, err := GetK8sClientConfig(contextName)
 	if err != nil {
@@ -96,35 +94,35 @@ func GetIngressPlaintext()  {
 		panic(err)
 	}
 
-	req := cli.CoreV1().RESTClient().
-		Get().AbsPath("/apis/networking.k8s.io/v1/namespaces/eng-dev/ingresses")
-	req.SetHeader("Accept", fmt.Sprintf("application/json;as=Table;v=%s;g=%s", metav1.SchemeGroupVersion.Version, metav1.GroupName))
-
+	req := cli.CoreV1().RESTClient().Get()
+	if namespace != "" {
+		req = req.AbsPath("/apis", groupVersion, "namespaces", namespace, resource, name)
+	} else {
+		req = req.AbsPath("/apis", groupVersion, resource, name)
+	}
+	req.SetHeader("Accept", "application/json")
 	resp := req.Do(ctx)
+
 	fmt.Printf("RESP: %#v", req.URL())
 
-	body, err := resp.Raw()
-
-	resTable := metav1.Table{}
-
-	err = json.Unmarshal(body, &resTable)
-	if err != nil {
-		panic(err)
-	}
-
-	for _, ing := range resTable.Rows {
-		fmt.Printf("Ingress: %v\n", ing.Cells[0])
-	}
+	return resp.Raw()
 }
 
-func GetPlaintext(ctx context.Context, ) ([]byte, error) {
-	return []byte{'b', 'l', 'a', 'h'}, nil
-}
-
-func GetIngressUnstructured() {
+func GetUnstructured() {
 	cli := getK8sUnstructuredClient()
 	ctx := context.TODO()
 
+
+	gvr := schema.GroupVersionResource{
+		Group: "",
+		Version: "networking.k8s.io/v1",
+		Resource: "ingresses",
+	}
+	cli.Resource(gvr).Namespace("eng-dev").List(ctx, metav1.ListOptions{})
+}
+
+func GetIngressUnstructured(ctx context.Context, contextName, name, namespace string, gvr *schema.GroupVersionResource) {
+	cli := getK8sUnstructuredClient()
 
 	gvr := schema.GroupVersionResource{
 		Group: "",
