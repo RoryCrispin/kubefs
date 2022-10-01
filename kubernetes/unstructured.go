@@ -2,13 +2,13 @@ package kubernetes
 
 import (
 	"context"
-	"fmt"
 	"encoding/json"
+	"fmt"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
-
+	"k8s.io/client-go/rest"
 )
 
 type metadataOnlyObject struct {
@@ -27,8 +27,15 @@ func ListResourceNames(ctx context.Context, groupVersion, resource, contextName,
 		return nil, fmt.Errorf("failed to make client from k8s config | %w", err)
 	}
 
-	req := cli.CoreV1().RESTClient().
-		Get().AbsPath("apis", groupVersion, "namespaces", namespace, resource)
+	var req *rest.Request
+	if namespace == "" {
+		req = cli.CoreV1().RESTClient().
+			Get().AbsPath("apis", groupVersion, resource)
+	} else {
+		req = cli.CoreV1().RESTClient().
+			Get().AbsPath("apis", groupVersion, "namespaces", namespace, resource)
+	}
+
 	req.SetHeader("Accept", fmt.Sprintf("application/json;as=Table;v=%s;g=%s", metav1.SchemeGroupVersion.Version, metav1.GroupName))
 	fmt.Printf("Requesting %#v\n", req)
 
@@ -53,7 +60,6 @@ func ListResourceNames(ctx context.Context, groupVersion, resource, contextName,
 	rv := make([]string, len(resTable.Rows))
 	for _, res := range resTable.Rows {
 		rv = append(rv, res.Cells[nameColumnIdx].(string))
-		fmt.Printf("Resource: %v\n", res.Cells[nameColumnIdx])
 	}
 	return rv, nil
 }
@@ -109,6 +115,10 @@ func GetIngressPlaintext()  {
 	for _, ing := range resTable.Rows {
 		fmt.Printf("Ingress: %v\n", ing.Cells[0])
 	}
+}
+
+func GetPlaintext(ctx context.Context, ) ([]byte, error) {
+	return []byte{'b', 'l', 'a', 'h'}, nil
 }
 
 func GetIngressUnstructured() {
