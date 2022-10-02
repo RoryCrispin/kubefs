@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -108,26 +109,31 @@ func GetPlaintextREST(ctx context.Context, contextName, name, groupVersion, reso
 	return resp.Raw()
 }
 
-func GetUnstructured() {
-	cli := getK8sUnstructuredClient()
-	ctx := context.TODO()
-
-
-	gvr := schema.GroupVersionResource{
-		Group: "",
-		Version: "networking.k8s.io/v1",
-		Resource: "ingresses",
-	}
-	cli.Resource(gvr).Namespace("eng-dev").List(ctx, metav1.ListOptions{})
-}
-
-func GetIngressUnstructured(ctx context.Context, contextName, name, namespace string, gvr *schema.GroupVersionResource) {
+func GetUnstructured(ctx context.Context, contextName, name, group, version, resource, namespace string) ([]byte, error) {
 	cli := getK8sUnstructuredClient()
 
 	gvr := schema.GroupVersionResource{
-		Group: "",
-		Version: "networking.k8s.io/v1",
-		Resource: "ingresses",
+		Group: group,
+		Version: version,
+		Resource: resource,
 	}
-	cli.Resource(gvr).Namespace("eng-dev").List(ctx, metav1.ListOptions{})
+	fmt.Printf("XOYO: getting groupVersion %#v", gvr)
+
+	var rv *unstructured.Unstructured
+	var err error
+	opts := metav1.GetOptions{}
+	if namespace != "" {
+		rv, err = cli.Resource(gvr).Namespace(namespace).Get(ctx, name, opts)
+	} else {
+		rv, err = cli.Resource(gvr).Get(ctx, name, opts)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("error encountered while fetching resource definition | %w", err)
+	}
+
+	jsonRv, err :=  json.Marshal(rv)
+	if err != nil {
+		return nil, fmt.Errorf("error encountered while marshalling resource definition to json | %w", err)
+	}
+	return jsonRv, nil
 }

@@ -2,7 +2,6 @@ package kubernetes
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"path/filepath"
 
@@ -77,16 +76,10 @@ func GetK8sClient(kCtx string) (*kubernetes.Clientset, error) {
 }
 
 func getK8sUnstructuredClient() dynamic.Interface {
-	var kubeconfig *string
-	if home := homedir.HomeDir(); home != "" {
-		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
-	} else {
-		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
-	}
-	flag.Parse()
+	kubeconfig := filepath.Join(homedir.HomeDir(), ".kube", "config")
 
 	// use the current context in kubeconfig
-	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		panic(err.Error())
 	}

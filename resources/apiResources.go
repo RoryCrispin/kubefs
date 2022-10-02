@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"syscall"
+	"strings"
 	"errors"
 
 	"github.com/hanwen/go-fuse/v2/fs"
@@ -319,7 +320,6 @@ func (n *ResourceNode) Lookup(ctx context.Context, name string, out *fuse.EntryO
 }
 
 
-
 ///
 ///
 ///
@@ -523,6 +523,7 @@ func (n *GenericResourceNode) Lookup(ctx context.Context, name string, out *fuse
 			name: name,
 			contextName: n.contextName,
 			namespace: n.namespace,
+			groupVersion: n.groupVersion,
 
 			stateStore: n.stateStore,
 		},
@@ -542,9 +543,10 @@ type GenericJSONFile struct {
 	name      string
 	namespace string
 	contextName string
-	goupVersion *GroupedAPIResource
+	groupVersion *GroupedAPIResource
 
 
+	lastError error
 	cli *k8s.Clientset
 	stateStore map[uint64]interface{}
 }
@@ -559,7 +561,26 @@ func (f *GenericJSONFile) Open(ctx context.Context, openFlags uint32) (fh fs.Fil
 		return nil, 0, syscall.EROFS
 	}
 
-	content, err := kube.GetPlaintext(ctx)
+	if f.groupVersion == nil {
+		fh = &roBytesFileHandle{
+			content: []byte(fmt.Sprintf("error while opening genericJSONFile, groupVersion ptr was nil\n")),
+		}
+		return fh, fuse.FOPEN_DIRECT_IO, 0
+	}
+
+	group, version, err  := splitGroupVersion(f.groupVersion.GroupVersion)
+	if err != nil {
+		fh = &roBytesFileHandle{
+			content: []byte(fmt.Sprintf("%#v", err)),
+		}
+		return fh, fuse.FOPEN_DIRECT_IO, 0
+	}
+
+	content, err := kube.GetUnstructured(
+		ctx, f.contextName, f.name,
+		group, version, f.groupVersion.ResourceName, f.namespace,
+	)
+
 	if errors.Is(err, kube.ErrNotFound) {
 		return nil, 0, syscall.ENOENT
 	}
@@ -577,6 +598,20 @@ func (f *GenericJSONFile) Open(ctx context.Context, openFlags uint32) (fh fs.Fil
 
 	// Return FOPEN_DIRECT_IO so content is not cached.
 	return fh, fuse.FOPEN_DIRECT_IO, 0
+}
+
+
+func splitGroupVersion(groupVersion string) (string, string, error) {
+	splat := strings.Split(groupVersion, "/")
+	if len(splat) != 2 {
+		return "", "",
+			fmt.Errorf(
+				"failed to split groupVersion, resource (%v)",
+				" contained an unexpected number of '/' chars.",
+				groupVersion,
+			)
+	}
+	return splat[0], splat[1], nil
 }
 
 // ========== Error file ==========
