@@ -32,9 +32,11 @@ func ListResourceNames(ctx context.Context, groupVersion, resource, contextName,
 	if namespace == "" {
 		req = cli.CoreV1().RESTClient().
 			Get().AbsPath("apis", groupVersion, resource)
+		fmt.Printf("XOYO: lookup CLUSTER %v\n", req.URL().Path)
 	} else {
 		req = cli.CoreV1().RESTClient().
 			Get().AbsPath("apis", groupVersion, "namespaces", namespace, resource)
+		fmt.Printf("XOYO: lookup namespaced for NS: %v PATH:e%v\n", namespace, req.URL().Path)
 	}
 
 	req.SetHeader("Accept", fmt.Sprintf("application/json;as=Table;v=%s;g=%s", metav1.SchemeGroupVersion.Version, metav1.GroupName))

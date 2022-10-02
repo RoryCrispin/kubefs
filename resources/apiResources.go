@@ -2,20 +2,23 @@ package resources
 
 import (
 	"context"
-	"fmt"
-	"syscall"
-	"strings"
 	"errors"
+	"fmt"
+	"strings"
+	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	k8s "k8s.io/client-go/kubernetes"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	k8s "k8s.io/client-go/kubernetes"
 
 	kube "rorycrispin.co.uk/kubefs/kubernetes"
 )
 
-
+// ResourceTypeNode is a Dir containing the different resource types within a cluster.
+// For example:
+// Namespaced <- namespaced resources
+// Cluster    <- resources which are not namespaced
 type ResourceTypeNode struct {
 	fs.Inode
 	contextName string
@@ -27,56 +30,54 @@ func (n *ResourceTypeNode) Path() string {
 	return fmt.Sprintf("%v/resources", n.contextName)
 }
 
-func (n *ResourceTypeNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	if name != "namespaced" && name != "cluster" {
-		fmt.Printf("Lookup of unknwon resource type, %v", name)
-		return nil, syscall.ENOENT
-	}
-	ch := n.NewInode(
-		ctx,
-		&RootResourcesNode{
-			namespaced: name == "namespaced",
-			contextName: n.contextName,
-
-			stateStore: n.stateStore,
-		},
-		fs.StableAttr{
-			Mode: syscall.S_IFDIR,
-			Ino: hash(fmt.Sprintf("%v/%v", n.Path(), name)),
-		},
-	)
-	return ch, 0
-}
-
-
-// // Readdir is part of the NodeReaddirer interface
 func (n *ResourceTypeNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	entries := []fuse.DirEntry{
 		{
 			Name: "namespaced",
-			Ino: hash(fmt.Sprintf("%v/namespaces", n.Path())),
+			Ino:  hash(fmt.Sprintf("%v/namespaces", n.Path())),
 			Mode: fuse.S_IFDIR,
 		},
 		{
 			Name: "cluster",
-			Ino: hash(fmt.Sprintf("%v/resources", n.Path())),
+			Ino:  hash(fmt.Sprintf("%v/resources", n.Path())),
 			Mode: fuse.S_IFDIR,
 		},
 	}
 	return fs.NewListDirStream(entries), 0
 }
 
+func (n *ResourceTypeNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	if name != "namespaced" && name != "cluster" {
+		return nil, syscall.ENOENT
+	}
+	ch := n.NewInode(
+		ctx,
+		&RootResourcesNode{
+			namespaced:  name == "namespaced",
+			contextName: n.contextName,
 
+			stateStore: n.stateStore,
+		},
+		fs.StableAttr{
+			Mode: syscall.S_IFDIR,
+			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
+		},
+	)
+	return ch, 0
+}
+
+// RootResourcesNode is a dir containing all of the api resources within a given
+// cluster. If the namespaced bool is true, then only namespaced api-resources
+// will be returned, and vice-versa.
 type RootResourcesNode struct {
 	fs.Inode
 
 	contextName string
-	namespaced bool
+	namespaced  bool
 
 	stateStore map[uint64]interface{}
-	err error
+	err        error
 }
-
 
 func (n *RootResourcesNode) Path() string {
 	return fmt.Sprintf("%v/resources", n.contextName)
@@ -86,11 +87,10 @@ type APIResources map[string]*GroupedAPIResource
 
 // GroupdAPIResource is a denormalisation of the metav1.APIResource and GroupVersion
 type GroupedAPIResource struct {
-
 	ResourceName string
 	GroupVersion string
-	ShortNames []string
-	Namespaced bool
+	ShortNames   []string
+	Namespaced   bool
 }
 
 func ensureAPIResources(stateStore map[uint64]any, contextName string) (APIResources, error) {
@@ -119,7 +119,7 @@ func ensureAPIResources(stateStore map[uint64]any, contextName string) (APIResou
 		var a *metav1.APIResource
 		var i int
 		for _, grp := range *resp {
-			for i = range(grp.APIResources) {
+			for i = range grp.APIResources {
 				a = &grp.APIResources[i]
 				elem, exists := rv[a.Name]
 				if exists {
@@ -129,8 +129,8 @@ func ensureAPIResources(stateStore map[uint64]any, contextName string) (APIResou
 				rv[a.Name] = &GroupedAPIResource{
 					ResourceName: a.Name,
 					GroupVersion: grp.GroupVersion,
-					ShortNames: a.ShortNames,
-					Namespaced: a.Namespaced,
+					ShortNames:   a.ShortNames,
+					Namespaced:   a.Namespaced,
 				}
 			}
 		}
@@ -139,9 +139,6 @@ func ensureAPIResources(stateStore map[uint64]any, contextName string) (APIResou
 	return rv, nil
 }
 
-var _ = (fs.NodeReaddirer)((*RootResourcesNode)(nil))
-
-// // Readdir is part of the NodeReaddirer interface
 func (n *RootResourcesNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	resources, err := ensureAPIResources(n.stateStore, n.contextName)
 	if err != nil {
@@ -150,7 +147,7 @@ func (n *RootResourcesNode) Readdir(ctx context.Context) (fs.DirStream, syscall.
 		return fs.NewListDirStream([]fuse.DirEntry{
 			{
 				Name: "error",
-				Ino: hash(fmt.Sprintf("%v/error", n.Path())),
+				Ino:  hash(fmt.Sprintf("%v/error", n.Path())),
 				Mode: fuse.S_IFREG,
 			},
 		}), 0
@@ -163,7 +160,7 @@ func (n *RootResourcesNode) Readdir(ctx context.Context) (fs.DirStream, syscall.
 		}
 		entries = append(entries, fuse.DirEntry{
 			Name: res.ResourceName,
-			Ino: hash(fmt.Sprintf("%v/%v", n.Path(), res.ResourceName)),
+			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), res.ResourceName)),
 			Mode: syscall.S_IFREG,
 		})
 	}
@@ -171,7 +168,6 @@ func (n *RootResourcesNode) Readdir(ctx context.Context) (fs.DirStream, syscall.
 }
 
 func (n *RootResourcesNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	fmt.Printf("LOOKUP RootResourcesNode: %v\n", name)
 	resources, err := ensureAPIResources(n.stateStore, n.contextName)
 	if err != nil {
 		fmt.Printf("Error while looking up Resource %v | %v", name, err)
@@ -181,160 +177,47 @@ func (n *RootResourcesNode) Lookup(ctx context.Context, name string, out *fuse.E
 	if !exists {
 		return nil, syscall.ENOENT
 	}
-	fmt.Printf("Found resource for lookup, details: %#v\n", elem)
 	if elem.Namespaced {
 		ch := n.NewInode(ctx, &ListGenericNamespaceNode{
-			contextName: n.contextName,
+			contextName:  n.contextName,
 			groupVersion: elem,
-			stateStore: n.stateStore,
+			stateStore:   n.stateStore,
 		},
 			fs.StableAttr{
 				Mode: syscall.S_IFDIR,
-				Ino: hash(fmt.Sprintf("%v/%v", n.Path(), name)),
+				Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
 			},
 		)
 		return ch, 0
 	} else {
-		ch := n.NewInode(ctx, &ResourceNode{
-			contextName: n.contextName,
+		ch := n.NewInode(ctx, &APIResourceNode{
+			contextName:  n.contextName,
 			groupVersion: elem,
-			stateStore: n.stateStore,
+			stateStore:   n.stateStore,
 		},
 			fs.StableAttr{
 				Mode: syscall.S_IFDIR,
-				Ino: hash(fmt.Sprintf("%v/%v", n.Path(), name)),
+				Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
 			},
 		)
 		return ch, 0
 	}
 }
 
-
-
-// ResourceNode represents the root of a specific resource.
-type ResourceNode struct {
-	// Must embed an Inode for the struct to work as a node.
-	fs.Inode
-
-	contextName string
-	groupVersion *GroupedAPIResource
-
-	lastError error
-
-	// cli *k8s.Clientset
-	stateStore map[uint64]interface{}
-}
-
-func (n *ResourceNode) Path() string {
-	return fmt.Sprintf("%v/resources/%v/%v",
-		n.contextName, n.groupVersion.GroupVersion, n.groupVersion.ResourceName,
-	)
-}
-
-var _ = (fs.NodeReaddirer)((*ResourceNode)(nil))
-
-// func (n *ResourceNode) ensureClientSet() error {
-// 	if n.cli != nil {
-// 		return nil
-// 	}
-// 	cli, err := kube.GetK8sClient(n.contextName)
-// 	if err != nil {
-// 		return err
-// 	}
-// 	n.cli = cli
-// 	return nil
-// }
-
-// // Readdir is part of the NodeReaddirer interface
-func (n *ResourceNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-
-	results, err := kube.ListResourceNames(ctx, n.groupVersion.GroupVersion,  n.groupVersion.ResourceName, n.contextName, "default")
-
-	if err != nil {
-		// The filesystem is our interface with the user, so let
-		// errors here be exposed via said interface.
-		n.lastError = err
-		entries := []fuse.DirEntry{
-			{
-				Name: "error",
-				Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), "error")),
-				Mode: fuse.S_IFREG,
-			},
-		}
-		return fs.NewListDirStream(entries), 0
-	}
-
-	entries := make([]fuse.DirEntry, 0, len(results))
-	for _, p := range results {
-		if p == "" {
-			continue
-		}
-		entries = append(entries, fuse.DirEntry{
-			Name: p,
-			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), p)),
-			Mode: fuse.S_IFDIR,
-		})
-	}
-	return fs.NewListDirStream(entries), 0
-}
-
-func (n *ResourceNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	fmt.Printf("LOOKUP OF ResourceNode %s' \n", name)
-	if name == "error" {
-		// TODO rc return a file whose string contents is the error
-		fmt.Printf("Error is %v", n.lastError)
-		return nil, syscall.ENOENT
-	}
-
-	if n.groupVersion.Namespaced {
-		fmt.Printf("NAMESPACED: %v", name)
-		ch := n.NewInode(
-			ctx,
-			&ListGenericNamespaceNode{
-				contextName: n.contextName,
-				groupVersion: n.groupVersion,
-
-				stateStore: n.stateStore,
-			},
-			fs.StableAttr{
-				Mode: syscall.S_IFDIR,
-				Ino: hash(fmt.Sprintf("%v/%v", n.Path(), name)),
-			})
-		return ch, 0
-	} else {
-		fmt.Printf("NOT-NAMESPACED: %v", name)
-		ch := n.NewInode(
-			ctx,
-			&GenericResourceNode{
-				contextName: n.contextName,
-				groupVersion: n.groupVersion,
-
-				stateStore: n.stateStore,
-			},
-			fs.StableAttr{
-				Mode: syscall.S_IFDIR,
-				Ino: hash(fmt.Sprintf("%v/%v", n.Path(), name)),
-			})
-		return ch, 0
-	}
-}
-
-
-///
-///
-///
-
-// ListGenericNamespaceNode represents the root of a specific resource.
+// ListGenericNamespaceNode returns a list of namespaces. lookup of the
+// namespace will reveal the list of Namespaced API resources. Hence, it's
+// different from the other, deprecated, namespace list node which reveals
+// well-known resources only.
 type ListGenericNamespaceNode struct {
 	// Must embed an Inode for the struct to work as a node.
 	fs.Inode
 
-	contextName string
+	contextName  string
 	groupVersion *GroupedAPIResource
 
 	lastError error
 
-	cli *k8s.Clientset
+	cli        *k8s.Clientset
 	stateStore map[uint64]interface{}
 }
 
@@ -367,17 +250,8 @@ func (n *ListGenericNamespaceNode) Readdir(ctx context.Context) (fs.DirStream, s
 
 	results, err := kube.GetNamespaces(ctx, n.cli)
 	if err != nil {
-		// The filesystem is our interface with the user, so let
-		// errors here be exposed via said interface.
 		n.lastError = err
-		entries := []fuse.DirEntry{
-			{
-				Name: "error",
-				Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), "error")),
-				Mode: fuse.S_IFREG,
-			},
-		}
-		return fs.NewListDirStream(entries), 0
+		return readDirErrResponse(n.Path())
 	}
 
 	entries := make([]fuse.DirEntry, 0, len(results))
@@ -396,7 +270,6 @@ func (n *ListGenericNamespaceNode) Readdir(ctx context.Context) (fs.DirStream, s
 }
 
 func (n *ListGenericNamespaceNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	fmt.Printf("LOOKUP OF ListGenericNamespaceNode %s' \n", name)
 	if name == "error" {
 		// TODO rc return a file whose string contents is the error
 		fmt.Printf("Error is %v", n.lastError)
@@ -406,9 +279,9 @@ func (n *ListGenericNamespaceNode) Lookup(ctx context.Context, name string, out 
 	ch := n.NewInode(
 		ctx,
 		// TODO rc need to have a new RootObjects for unstructured clients.
-		&GenericResourceNode{
-			namespace: name,
-			contextName: n.contextName,
+		&APIResourceNode{
+			namespace:    name,
+			contextName:  n.contextName,
 			groupVersion: n.groupVersion,
 
 			//cli: n.cli,
@@ -416,25 +289,20 @@ func (n *ListGenericNamespaceNode) Lookup(ctx context.Context, name string, out 
 		},
 		fs.StableAttr{
 			Mode: syscall.S_IFDIR,
-			Ino: hash(fmt.Sprintf("%v/%v", n.Path(), name)),
+			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
 		},
 	)
 	return ch, 0
 }
 
-
-///
-///
-///
-///
-///
-
-// GenericResourceNode represents the root of a specific resource.
-type GenericResourceNode struct {
+// APIResourceNode is a dir containing the list of resources for an API
+// resource. It may be Namespaced or Clustered. If the resource is clustered,
+// then the namespace field will be the empty string.
+type APIResourceNode struct {
 	// Must embed an Inode for the struct to work as a node.
 	fs.Inode
 
-	contextName string
+	contextName  string
 	groupVersion *GroupedAPIResource
 
 	// If this the resource is namespaced, then namespace will be set.
@@ -443,11 +311,11 @@ type GenericResourceNode struct {
 
 	lastError error
 
-	cli *k8s.Clientset
+	cli        *k8s.Clientset
 	stateStore map[uint64]interface{}
 }
 
-func (n *GenericResourceNode) Path() string {
+func (n *APIResourceNode) Path() string {
 	if n.groupVersion.Namespaced {
 		return fmt.Sprintf("%v/resources/%v/%v/namespaces/%v",
 			n.contextName, n.groupVersion.GroupVersion, n.groupVersion.ResourceName, n.namespace,
@@ -459,9 +327,9 @@ func (n *GenericResourceNode) Path() string {
 	}
 }
 
-var _ = (fs.NodeReaddirer)((*GenericResourceNode)(nil))
+var _ = (fs.NodeReaddirer)((*APIResourceNode)(nil))
 
-func (n *GenericResourceNode) ensureClientSet() error {
+func (n *APIResourceNode) ensureClientSet() error {
 	if n.cli != nil {
 		return nil
 	}
@@ -474,7 +342,7 @@ func (n *GenericResourceNode) ensureClientSet() error {
 }
 
 // // Readdir is part of the NodeReaddirer interface
-func (n *GenericResourceNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
+func (n *APIResourceNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	err := n.ensureClientSet()
 	if err != nil {
 		panic(err)
@@ -484,14 +352,7 @@ func (n *GenericResourceNode) Readdir(ctx context.Context) (fs.DirStream, syscal
 		// The filesystem is our interface with the user, so let
 		// errors here be exposed via said interface.
 		n.lastError = err
-		entries := []fuse.DirEntry{
-			{
-				Name: "error",
-				Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), "error")),
-				Mode: fuse.S_IFREG,
-			},
-		}
-		return fs.NewListDirStream(entries), 0
+		return readDirErrResponse(n.Path())
 	}
 
 	entries := make([]fuse.DirEntry, 0, len(results))
@@ -499,18 +360,16 @@ func (n *GenericResourceNode) Readdir(ctx context.Context) (fs.DirStream, syscal
 		if p == "" {
 			continue
 		}
-		fmt.Printf("Make reg file : %v\n", p)
 		entries = append(entries, fuse.DirEntry{
 			Name: p,
 			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), p)),
-			Mode: fuse.S_IFREG,
+			Mode: fuse.S_IFDIR,
 		})
 	}
 	return fs.NewListDirStream(entries), 0
 }
 
-func (n *GenericResourceNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	fmt.Printf("LOOKUP OF GenericResourceNode %s' \n", name)
+func (n *APIResourceNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	if name == "error" {
 		// TODO rc return a file whose string contents is the error
 		fmt.Printf("Error is %v", n.lastError)
@@ -519,35 +378,95 @@ func (n *GenericResourceNode) Lookup(ctx context.Context, name string, out *fuse
 
 	ch := n.NewInode(
 		ctx,
-		&GenericJSONFile{
-			name: name,
-			contextName: n.contextName,
-			namespace: n.namespace,
+		&APIResourceActions{
+			name:         name,
+			contextName:  n.contextName,
+			namespace:    n.namespace,
 			groupVersion: n.groupVersion,
 
 			stateStore: n.stateStore,
 		},
 		fs.StableAttr{
-			Mode: fuse.S_IFREG,
-			Ino: hash(fmt.Sprintf("%v/%v", n.Path(), name)),
+			Mode: fuse.S_IFDIR,
+			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
 		},
 	)
 	return ch, 0
 }
+
+
+type APIResourceActions struct {
+	fs.Inode
+
+	name         string
+	namespace    string
+	contextName  string
+	groupVersion *GroupedAPIResource
+
+	lastError  error
+	cli        *k8s.Clientset
+	stateStore map[uint64]interface{}
+}
+
+func (n *APIResourceActions) Path() string {
+	if n.groupVersion.Namespaced {
+		return fmt.Sprintf("%v/resources/%v/%v/namespaces/%v/%v",
+			n.contextName, n.groupVersion.GroupVersion, n.groupVersion.ResourceName, n.namespace, n.name,
+		)
+	} else {
+		return fmt.Sprintf("%v/resources/%v/%v/%v", //TODO is this shadowed?
+			n.contextName, n.groupVersion.GroupVersion, n.groupVersion.ResourceName, n.name,
+		)
+	}
+}
+
+func (n *APIResourceActions) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
+	entries := []fuse.DirEntry{
+		{
+			Name: "json",
+			Ino:  hash(fmt.Sprintf("%v/json", n.Path())),
+			Mode: fuse.S_IFDIR,
+		},
+	}
+	return fs.NewListDirStream(entries), 0
+}
+
+func (n *APIResourceActions) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	if name == "json" {
+	ch := n.NewInode(
+		ctx,
+		&GenericJSONFile{
+			name: n.name,
+			namespace: n.namespace,
+			contextName: n.contextName,
+			groupVersion: n.groupVersion,
+
+			cli: n.cli,
+			stateStore: n.stateStore,
+		},
+		fs.StableAttr{
+			Mode: syscall.S_IFREG,
+			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
+		},
+	)
+	return ch, 0
+	}
+	return nil, syscall.ENOENT
+}
+
 
 // ========== Generic JSON file ==========
 
 type GenericJSONFile struct {
 	fs.Inode
 
-	name      string
-	namespace string
-	contextName string
+	name         string
+	namespace    string
+	contextName  string
 	groupVersion *GroupedAPIResource
 
-
-	lastError error
-	cli *k8s.Clientset
+	lastError  error
+	cli        *k8s.Clientset
 	stateStore map[uint64]interface{}
 }
 
@@ -555,7 +474,6 @@ type GenericJSONFile struct {
 var _ = (fs.NodeOpener)((*GenericJSONFile)(nil))
 
 func (f *GenericJSONFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
-	fmt.Printf("~~ LOOKUP ON GenericJSONFile, %v\n", f.name)
 	if fuseFlags&(syscall.O_RDWR|syscall.O_WRONLY) != 0 {
 		// disallow writes
 		return nil, 0, syscall.EROFS
@@ -568,7 +486,7 @@ func (f *GenericJSONFile) Open(ctx context.Context, openFlags uint32) (fh fs.Fil
 		return fh, fuse.FOPEN_DIRECT_IO, 0
 	}
 
-	group, version, err  := splitGroupVersion(f.groupVersion.GroupVersion)
+	group, version, err := splitGroupVersion(f.groupVersion.GroupVersion)
 	if err != nil {
 		fh = &roBytesFileHandle{
 			content: []byte(fmt.Sprintf("%#v", err)),
@@ -591,15 +509,12 @@ func (f *GenericJSONFile) Open(ctx context.Context, openFlags uint32) (fh fs.Fil
 		return fh, fuse.FOPEN_DIRECT_IO, 0
 	}
 
-
 	fh = &roBytesFileHandle{
 		content: content,
 	}
 
-	// Return FOPEN_DIRECT_IO so content is not cached.
 	return fh, fuse.FOPEN_DIRECT_IO, 0
 }
-
 
 func splitGroupVersion(groupVersion string) (string, string, error) {
 	splat := strings.Split(groupVersion, "/")
