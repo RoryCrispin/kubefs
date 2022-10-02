@@ -2,7 +2,6 @@ package kubernetes
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"path/filepath"
 
@@ -45,12 +44,12 @@ func GetK8sContexts() ([]string, error) {
 	return out, nil
 }
 
-func GetK8sClientConfig(kCtx string) (*rest.Config, error) {
+func GetK8sClientConfig(contextName string) (*rest.Config, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 
 	configOverrides := &clientcmd.ConfigOverrides{}
-	if kCtx != "" {
-		configOverrides.CurrentContext = kCtx
+	if contextName != "" {
+		configOverrides.CurrentContext = contextName
 	}
 
 	config, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(loadingRules, configOverrides).ClientConfig()
@@ -77,16 +76,10 @@ func GetK8sClient(kCtx string) (*kubernetes.Clientset, error) {
 }
 
 func getK8sUnstructuredClient() dynamic.Interface {
-	var kubeconfig *string
-	if home := homedir.HomeDir(); home != "" {
-		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
-	} else {
-		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
-	}
-	flag.Parse()
+	kubeconfig := filepath.Join(homedir.HomeDir(), ".kube", "config")
 
 	// use the current context in kubeconfig
-	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
 	if err != nil {
 		panic(err.Error())
 	}
@@ -121,44 +114,29 @@ func getResourcesGeneric(cli dynamic.Interface) {
 	fmt.Printf("%#v\n", res.Items)
 }
 
-func getApiResources(cli *discovery.DiscoveryClient) {
+func GetApiResources(cli *discovery.DiscoveryClient) (*[]*metav1.APIResourceList, error){
 
-	apiGroups, apiResourceList, err := cli.ServerGroupsAndResources()
-	if err != nil {
-		panic(err)
+	apiResourceList, err := cli.ServerPreferredResources()
+	if discovery.IsGroupDiscoveryFailedError(err) {
+		fmt.Printf("WARNING: The Kubernetes server has an orphaned API service. Server reports: %s\n", err)
+		fmt.Printf("WARNING: To fix this, kubectl delete apiservice <service-name>\n")
+	} else {
+		return nil, fmt.Errorf("could not get apiVersions from Kubernetes | %w", err)
 	}
-	for _, apiGroup := range apiGroups {
-		fmt.Printf("Apigroup: %s\n", apiGroup.Name)
-	}
-
-	for _, res := range apiResourceList {
-		fmt.Printf("GroupVersion: %s\n", res.GroupVersion)
-		for _, r := range res.APIResources {
-			fmt.Printf("    ApiResource: %s Version %s\n", r.Name, r.Version)
-		}
-	}
+	return &apiResourceList, nil
 }
 
-func getK8sDiscoveryClient() *discovery.DiscoveryClient {
-	var kubeconfig *string
-	if home := homedir.HomeDir(); home != "" {
-		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
-	} else {
-		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
-	}
-	flag.Parse()
-
-	// use the current context in kubeconfig
-	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
+func GetK8sDiscoveryClient(contextName string) (*discovery.DiscoveryClient, error) {
+	config, err := GetK8sClientConfig(contextName)
 	if err != nil {
-		panic(err.Error())
+		return nil, err
 	}
 
 	// create the clientset
 	clientset, err := discovery.NewDiscoveryClientForConfig(config)
 	if err != nil {
-		panic(err.Error())
+		return nil, err
 	}
 
-	return clientset
+	return clientset, nil
 }

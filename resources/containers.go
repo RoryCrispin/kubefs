@@ -309,7 +309,8 @@ func (bn *ContainerExecFile) Write(ctx context.Context, fh fs.FileHandle, buf []
 		eout := fmt.Errorf("err while executing: %w", err)
 		fmt.Print(eout, "\n")
 		bn.content = []byte(fmt.Sprint(eout))
-		return 0, syscall.EREMOTEIO
+		//return 0, syscall.EREMOTEIO
+		return 0, syscall.ENOENT
 	}
 	bn.mu.Lock()
 	defer bn.mu.Unlock()

@@ -7,3 +7,16 @@ for example - when running an exec on an ImagePullBackoff pod, the container is 
 
 * Doesn't respond to interrupts
  - would be good to cancel an exec when the write is interrupted
+
+* The resources directory structure should work like so
+
+resources/pods/v1/ <- list of pods
+resources/pods/metrics.k8s.io <- list of metrics
+
+so when there is a collision you just disambiguate it in the next directory, this is
+better than having to memorise all of the groupversions upgfont.
+
+When there is no disambiguation to do, perhaps we just inline the pods onto the disambiguation dir to save some time?
+
+* Unify the unstructured resources with the corev1 resources
+so if the resource is well-know we just offer more actions against it

@@ -4,20 +4,20 @@ import (
 	"fmt"
 	"bytes"
 	"context"
-	spdyStream "k8s.io/apimachinery/pkg/util/httpstream/spdy"
 	"crypto/tls"
 	"encoding/json"
 
 	corev1 "k8s.io/api/core/v1"
 	kube_errors "k8s.io/apimachinery/pkg/api/errors"
+	spdyStream "k8s.io/apimachinery/pkg/util/httpstream/spdy"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/kubernetes"
 	k8s "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/client-go/kubernetes/scheme"
-)
 
+)
 
 func GetPods(ctx context.Context, cli *k8s.Clientset, namespace string) ([]string, error) {
 	pods, err := cli.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
@@ -32,6 +32,7 @@ func GetPods(ctx context.Context, cli *k8s.Clientset, namespace string) ([]strin
 	}
 	return rv, nil
 }
+
 func getPod(ctx context.Context, cli *k8s.Clientset, name, namespace string) (*corev1.Pod, error) {
 	pod, err := cli.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
 	if kube_errors.IsNotFound(err) {

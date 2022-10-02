@@ -22,6 +22,17 @@ func main() {
 		panic(fmt.Errorf("Failed to mount | %w", err))
 	}
 
+	// cli, err := kube.GetK8sDiscoveryClient("eng-instances")
+	// if err != nil {
+	// 	panic(err)
+	// }
+	// kube.GetApiResources(cli)
+
+	// _, err = kube.ListResourceNames(context.TODO(), "cert-manager.io", "v1", "certificates", "eng-instances", "eng-dev")
+	// if err != nil {
+	// 	panic(err)
+	// }
+
 	root := resources.NewRootContextNode()
 	server, err := fs.Mount(mntDir, root, &fs.Options{
 		MountOptions: fuse.MountOptions{
