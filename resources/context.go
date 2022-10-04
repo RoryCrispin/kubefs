@@ -88,19 +88,10 @@ func (n *RootContextObjectsNode) Path() string {
 	return n.name
 }
 
-// Ensure we are implementing the NodeReaddirer interface
-var _ = (fs.NodeReaddirer)((*RootContextObjectsNode)(nil))
-
-// // Readdir is part of the NodeReaddirer interface
 func (n *RootContextObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	fmt.Printf("READDIR RootContextObjectsNode: ns: %s %#v\n", n.name, ctx)
 
 	entries := []fuse.DirEntry{
-		{
-			Name: "namespaces",
-			Ino: hash(fmt.Sprintf("%v/namespaces", n.Path())),
-			Mode: fuse.S_IFDIR,
-		},
 		{
 			Name: "resources",
 			Ino: hash(fmt.Sprintf("%v/resources", n.Path())),
@@ -116,21 +107,7 @@ func (n *RootContextObjectsNode) Readdir(ctx context.Context) (fs.DirStream, sys
 }
 
 func (n *RootContextObjectsNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	if name == "namespaces" {
-		fmt.Printf("Looked up NS on context %v", n.name)
-		ch := n.NewInode(
-			ctx,
-			&RootNSNode{
-				contextName: n.name,
-				stateStore: n.stateStore,
-			},
-			fs.StableAttr{
-				Mode: syscall.S_IFDIR,
-				Ino: hash(fmt.Sprintf("%v/namespaces", n.Path())),
-			},
-		)
-		return ch, 0
-	} else if name == "resources" {
+	if name == "resources" {
 		ch := n.NewInode(
 			ctx,
 			&ResourceTypeNode{

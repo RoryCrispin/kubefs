@@ -34,12 +34,23 @@ func (n *RootContainerNode) Path() string {
 	)
 }
 
-// Ensure we are implementing the NodeReaddirer interface
-var _ = (fs.NodeReaddirer)((*RootContainerNode)(nil))
 
-// // Readdir is part of the NodeReaddirer interface
+func (n *RootContainerNode) ensureCLI() error {
+	if n.cli != nil {
+		return nil
+	}
+	cli, err := kube.GetK8sClient(n.contextName)
+	if err != nil {
+		return err
+	}
+	n.cli = cli
+	return nil
+}
+
 func (n *RootContainerNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	fmt.Printf("READDIR RootContainerNode: %#v\n", ctx)
+
+	n.ensureCLI()
 
 	results, err := kube.GetContainers(ctx, n.cli, n.pod, n.namespace)
 	if err != nil {
@@ -218,6 +229,18 @@ type ContainerLogsFile struct {
 	stateStore map[uint64]interface{}
 }
 
+func (n *ContainerLogsFile) ensureCLI() error {
+	if n.cli != nil {
+		return nil
+	}
+	cli, err := kube.GetK8sClient(n.contextName)
+	if err != nil {
+		return err
+	}
+	n.cli = cli
+	return nil
+}
+
 var _ = (fs.NodeOpener)((*ContainerLogsFile)(nil))
 
 func (f *ContainerLogsFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
@@ -226,6 +249,8 @@ func (f *ContainerLogsFile) Open(ctx context.Context, openFlags uint32) (fh fs.F
 	if fuseFlags&(syscall.O_RDWR|syscall.O_WRONLY) != 0 {
 		return nil, 0, syscall.EROFS
 	}
+
+	f.ensureCLI()
 
 	var logs []byte
 	var err error
@@ -236,6 +261,7 @@ func (f *ContainerLogsFile) Open(ctx context.Context, openFlags uint32) (fh fs.F
 	}
 
 	if errors.Is(err, kube.ErrNotFound) {
+		fmt.Printf("Err not found while opening logs\n")
 		return nil, 0, syscall.ENOENT
 	}
 	if err != nil {

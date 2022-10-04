@@ -28,15 +28,20 @@ func ListResourceNames(ctx context.Context, groupVersion, resource, contextName,
 		return nil, fmt.Errorf("failed to make client from k8s config | %w", err)
 	}
 
+	var pathPrefix string
+	if groupVersion == "v1" {
+		pathPrefix = "api"
+	} else {
+		pathPrefix = "apis"
+	}
+
 	var req *rest.Request
 	if namespace == "" {
 		req = cli.CoreV1().RESTClient().
-			Get().AbsPath("apis", groupVersion, resource)
-		fmt.Printf("XOYO: lookup CLUSTER %v\n", req.URL().Path)
+			Get().AbsPath(pathPrefix, groupVersion, resource)
 	} else {
 		req = cli.CoreV1().RESTClient().
-			Get().AbsPath("apis", groupVersion, "namespaces", namespace, resource)
-		fmt.Printf("XOYO: lookup namespaced for NS: %v PATH:e%v\n", namespace, req.URL().Path)
+			Get().AbsPath(pathPrefix, groupVersion, "namespaces", namespace, resource)
 	}
 
 	req.SetHeader("Accept", fmt.Sprintf("application/json;as=Table;v=%s;g=%s", metav1.SchemeGroupVersion.Version, metav1.GroupName))
@@ -45,7 +50,7 @@ func ListResourceNames(ctx context.Context, groupVersion, resource, contextName,
 	resp := req.Do(ctx)
 	body, err := resp.Raw()
 	if err != nil {
-		return nil, fmt.Errorf("error returned from api server on %v %v | %w", groupVersion, resource, err)
+		return nil, fmt.Errorf("error returned from api server on %v | %w", req.URL().Path, err)
 	}
 
 	resTable := metav1.Table{}
