@@ -368,7 +368,7 @@ func (n *APIResourceNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Er
 
 func getAPIResourceStruct(name, contextName, namespace string, groupVersion *GroupedAPIResource, stateStore map[uint64]any) fs.InodeEmbedder {
 	if groupVersion.GroupVersion == "v1" && groupVersion.ResourceName == "pods" {
-		return &RootPodObjectsNode{
+		return &PodObjectsNode{
 			name: name,
 			contextName: contextName,
 			namespace: namespace,
