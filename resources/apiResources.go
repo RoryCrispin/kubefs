@@ -2,7 +2,6 @@ package resources
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"syscall"
@@ -204,95 +203,6 @@ func (n *RootResourcesNode) Lookup(ctx context.Context, name string, out *fuse.E
 	}
 }
 
-// ListGenericNamespaceNode returns a list of namespaces. lookup of the
-// namespace will reveal the list of Namespaced API resources. Hence, it's
-// different from the other, deprecated, namespace list node which reveals
-// well-known resources only.
-type ListGenericNamespaceNode struct {
-	// Must embed an Inode for the struct to work as a node.
-	fs.Inode
-
-	contextName  string
-	groupVersion *GroupedAPIResource
-
-	lastError error
-
-	cli        *k8s.Clientset
-	stateStore map[uint64]interface{}
-}
-
-func (n *ListGenericNamespaceNode) Path() string {
-	return fmt.Sprintf("%v/resources/%v/%v/namespaces",
-		n.contextName, n.groupVersion.GroupVersion, n.groupVersion.ResourceName,
-	)
-}
-
-var _ = (fs.NodeReaddirer)((*ListGenericNamespaceNode)(nil))
-
-func (n *ListGenericNamespaceNode) ensureClientSet() error {
-	if n.cli != nil {
-		return nil
-	}
-	cli, err := kube.GetK8sClient(n.contextName)
-	if err != nil {
-		return err
-	}
-	n.cli = cli
-	return nil
-}
-
-// // Readdir is part of the NodeReaddirer interface
-func (n *ListGenericNamespaceNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	err := n.ensureClientSet()
-	if err != nil {
-		panic(err)
-	}
-
-	results, err := kube.GetNamespaces(ctx, n.cli)
-	if err != nil {
-		n.lastError = err
-		return readDirErrResponse(n.Path())
-	}
-
-	entries := make([]fuse.DirEntry, 0, len(results))
-	for _, p := range results {
-		if p == "" {
-			continue
-		}
-		entries = append(entries, fuse.DirEntry{
-			Name: p,
-			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), p)),
-			Mode: fuse.S_IFDIR,
-		})
-	}
-	return fs.NewListDirStream(entries), 0
-
-}
-
-func (n *ListGenericNamespaceNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	if name == "error" {
-		// TODO rc return a file whose string contents is the error
-		fmt.Printf("Error is %v", n.lastError)
-		return nil, syscall.ENOENT
-	}
-
-	ch := n.NewInode(
-		ctx,
-		&APIResourceNode{
-			namespace:    name,
-			contextName:  n.contextName,
-			groupVersion: n.groupVersion,
-
-			stateStore: n.stateStore,
-		},
-		fs.StableAttr{
-			Mode: syscall.S_IFDIR,
-			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
-		},
-	)
-	return ch, 0
-}
-
 // APIResourceNode is a dir containing the list of resources for an API
 // resource. It may be Namespaced or Clustered. If the resource is clustered,
 // then the namespace field will be the empty string.
@@ -437,7 +347,7 @@ func (n *APIResourceActions) Path() string {
 func (n *APIResourceActions) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	entries := []fuse.DirEntry{
 		{
-			Name: "json",
+			Name: "def.json",
 			Ino:  hash(fmt.Sprintf("%v/json", n.Path())),
 			Mode: fuse.S_IFDIR,
 		},
@@ -446,7 +356,7 @@ func (n *APIResourceActions) Readdir(ctx context.Context) (fs.DirStream, syscall
 }
 
 func (n *APIResourceActions) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	if name == "json" {
+	if name == "def.json" {
 	ch := n.NewInode(
 		ctx,
 		&GenericJSONFile{
@@ -469,67 +379,6 @@ func (n *APIResourceActions) Lookup(ctx context.Context, name string, out *fuse.
 }
 
 
-// ========== Generic JSON file ==========
-
-type GenericJSONFile struct {
-	fs.Inode
-
-	name         string
-	namespace    string
-	contextName  string
-	groupVersion *GroupedAPIResource
-
-	lastError  error
-	cli        *k8s.Clientset
-	stateStore map[uint64]interface{}
-}
-
-// GenericJSONFile implements Open
-var _ = (fs.NodeOpener)((*GenericJSONFile)(nil))
-
-func (f *GenericJSONFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
-	if fuseFlags&(syscall.O_RDWR|syscall.O_WRONLY) != 0 {
-		// disallow writes
-		return nil, 0, syscall.EROFS
-	}
-
-	if f.groupVersion == nil {
-		fh = &roBytesFileHandle{
-			content: []byte(fmt.Sprintf("error while opening genericJSONFile, groupVersion ptr was nil\n")),
-		}
-		return fh, fuse.FOPEN_DIRECT_IO, 0
-	}
-
-	group, version, err := splitGroupVersion(f.groupVersion.GroupVersion)
-	if err != nil {
-		fh = &roBytesFileHandle{
-			content: []byte(fmt.Sprintf("%#v", err)),
-		}
-		return fh, fuse.FOPEN_DIRECT_IO, 0
-	}
-
-	content, err := kube.GetUnstructured(
-		ctx, f.contextName, f.name,
-		group, version, f.groupVersion.ResourceName, f.namespace,
-	)
-
-	if errors.Is(err, kube.ErrNotFound) {
-		return nil, 0, syscall.ENOENT
-	}
-	if err != nil {
-		fh = &roBytesFileHandle{
-			content: []byte(fmt.Sprintf("%#v", err)),
-		}
-		return fh, fuse.FOPEN_DIRECT_IO, 0
-	}
-
-	fh = &roBytesFileHandle{
-		content: content,
-	}
-
-	return fh, fuse.FOPEN_DIRECT_IO, 0
-}
-
 func splitGroupVersion(groupVersion string) (string, string, error) {
 	splat := strings.Split(groupVersion, "/")
 	if len(splat) != 2 {
@@ -543,24 +392,3 @@ func splitGroupVersion(groupVersion string) (string, string, error) {
 	return splat[0], splat[1], nil
 }
 
-// ========== Error file ==========
-
-type ErrorFile struct {
-	fs.Inode
-
-	err error
-
-	stateStore map[uint64]interface{}
-}
-
-func (f *ErrorFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
-	if fuseFlags&(syscall.O_RDWR|syscall.O_WRONLY) != 0 {
-		// disallow writes
-		return nil, 0, syscall.EROFS
-	}
-
-	fh = &roBytesFileHandle{
-		content: []byte(fmt.Sprintf("%v", f.err)),
-	}
-	return fh, fuse.FOPEN_DIRECT_IO, 0
-}

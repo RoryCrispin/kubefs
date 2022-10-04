@@ -59,3 +59,25 @@ func (fh *rwBytesFileHandle) Fsync(ctx context.Context, flags uint32) syscall.Er
 	fmt.Printf("rwBytesFileFsync, flags: %b\n", flags)
 	return 0
 }
+
+// ========== Error file ==========
+
+type ErrorFile struct {
+	fs.Inode
+
+	err error
+
+	stateStore map[uint64]interface{}
+}
+
+func (f *ErrorFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
+	if fuseFlags&(syscall.O_RDWR|syscall.O_WRONLY) != 0 {
+		// disallow writes
+		return nil, 0, syscall.EROFS
+	}
+
+	fh = &roBytesFileHandle{
+		content: []byte(fmt.Sprintf("%v", f.err)),
+	}
+	return fh, fuse.FOPEN_DIRECT_IO, 0
+}
