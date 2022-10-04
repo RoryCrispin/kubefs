@@ -128,9 +128,6 @@ func (n *RootNSObjectsNode) Path() string {
 	)
 }
 
-// Ensure we are implementing the NodeReaddirer interface
-var _ = (fs.NodeReaddirer)((*RootNSObjectsNode)(nil))
-
 func (n *RootNSObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	fmt.Printf("READDIR RootNSObjectsNode: ns: %s %#v\n", n.namespace, ctx)
 

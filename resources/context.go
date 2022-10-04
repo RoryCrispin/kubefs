@@ -88,10 +88,6 @@ func (n *RootContextObjectsNode) Path() string {
 	return n.name
 }
 
-// Ensure we are implementing the NodeReaddirer interface
-var _ = (fs.NodeReaddirer)((*RootContextObjectsNode)(nil))
-
-// // Readdir is part of the NodeReaddirer interface
 func (n *RootContextObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	fmt.Printf("READDIR RootContextObjectsNode: ns: %s %#v\n", n.name, ctx)
 

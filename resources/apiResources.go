@@ -278,13 +278,11 @@ func (n *ListGenericNamespaceNode) Lookup(ctx context.Context, name string, out 
 
 	ch := n.NewInode(
 		ctx,
-		// TODO rc need to have a new RootObjects for unstructured clients.
 		&APIResourceNode{
 			namespace:    name,
 			contextName:  n.contextName,
 			groupVersion: n.groupVersion,
 
-			//cli: n.cli,
 			stateStore: n.stateStore,
 		},
 		fs.StableAttr{
@@ -341,7 +339,6 @@ func (n *APIResourceNode) ensureClientSet() error {
 	return nil
 }
 
-// // Readdir is part of the NodeReaddirer interface
 func (n *APIResourceNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	err := n.ensureClientSet()
 	if err != nil {
@@ -369,6 +366,28 @@ func (n *APIResourceNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Er
 	return fs.NewListDirStream(entries), 0
 }
 
+func getAPIResourceStruct(name, contextName, namespace string, groupVersion *GroupedAPIResource, stateStore map[uint64]any) fs.InodeEmbedder {
+	if groupVersion.GroupVersion == "v1" && groupVersion.ResourceName == "pods" {
+		return &RootPodObjectsNode{
+			name: name,
+			contextName: contextName,
+			namespace: namespace,
+
+			stateStore: stateStore,
+		}
+	} else {
+		return &APIResourceActions{
+			name: name,
+			contextName: contextName,
+			namespace: namespace,
+			groupVersion: groupVersion,
+
+			stateStore: stateStore,
+		}
+	}
+
+}
+
 func (n *APIResourceNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	if name == "error" {
 		// TODO rc return a file whose string contents is the error
@@ -376,16 +395,11 @@ func (n *APIResourceNode) Lookup(ctx context.Context, name string, out *fuse.Ent
 		return nil, syscall.ENOENT
 	}
 
+	node := getAPIResourceStruct(name, n.contextName, n.namespace, n.groupVersion, n.stateStore)
+
 	ch := n.NewInode(
 		ctx,
-		&APIResourceActions{
-			name:         name,
-			contextName:  n.contextName,
-			namespace:    n.namespace,
-			groupVersion: n.groupVersion,
-
-			stateStore: n.stateStore,
-		},
+		node,
 		fs.StableAttr{
 			Mode: fuse.S_IFDIR,
 			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
@@ -538,9 +552,6 @@ type ErrorFile struct {
 
 	stateStore map[uint64]interface{}
 }
-
-// GenericJSONFile implements Open
-var _ = (fs.NodeOpener)((*GenericJSONFile)(nil))
 
 func (f *ErrorFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
 	if fuseFlags&(syscall.O_RDWR|syscall.O_WRONLY) != 0 {

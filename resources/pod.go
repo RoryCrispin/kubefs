@@ -87,7 +87,7 @@ type RootPodObjectsNode struct {
 	contextName string
 
 	cli *k8s.Clientset
-	stateStore map[uint64]interface{}
+	stateStore map[uint64]any
 }
 
 func (n *RootPodObjectsNode) Path() uint64 {
@@ -124,7 +124,7 @@ func (n *RootPodObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall
 
 func (n *RootPodObjectsNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	fmt.Printf("LOOKUP OF %s on RootPodObjectsNode: %s' \n", name, n.namespace)
-	if name == "json" {
+	if name == "def.json" {
 		fmt.Printf("LOOKED UP json: %s:%s\n", n.namespace, n.name)
 		ch := n.NewInode(
 			ctx,
@@ -179,14 +179,14 @@ type PodJSONFile struct {
 	stateStore map[uint64]interface{}
 }
 
-// PodJSONFile implements Open
-var _ = (fs.NodeOpener)((*PodJSONFile)(nil))
 
 func (f *PodJSONFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
 	if fuseFlags&(syscall.O_RDWR|syscall.O_WRONLY) != 0 {
 		// disallow writes
 		return nil, 0, syscall.EROFS
 	}
+
+	f.ensureCLI()
 
 	podDef, err := kube.GetPodDefinition(ctx, f.cli, f.name, f.namespace)
 	if errors.Is(err, kube.ErrNotFound) {
@@ -208,3 +208,15 @@ func (f *PodJSONFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHan
 	return fh, fuse.FOPEN_DIRECT_IO, 0
 }
 
+
+func (f *PodJSONFile) ensureCLI() error {
+	if f.cli != nil {
+		return nil
+	}
+	cli, err := kube.GetK8sClient(f.contextName)
+	if err != nil {
+		return err
+	}
+	f.cli = cli
+	return nil
+}
