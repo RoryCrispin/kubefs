@@ -75,7 +75,7 @@ type RootResourcesNode struct {
 	namespaced  bool
 
 	stateStore map[uint64]interface{}
-	err        error
+	lastError        error
 }
 
 func (n *RootResourcesNode) Path() string {
@@ -87,10 +87,28 @@ type APIResources map[string]*GroupedAPIResource
 // GroupdAPIResource is a denormalisation of the metav1.APIResource and GroupVersion
 type GroupedAPIResource struct {
 	ResourceName string
-	GroupVersion string
+	GroupVersion_ string
 	ShortNames   []string
 	Namespaced   bool
+	Group string
+	Version string
 }
+
+func (g *GroupedAPIResource) CLIName() string {
+	if g.Version == "" {
+		return g.ResourceName
+	}
+	return fmt.Sprint(g.ResourceName, ".", g.Group)
+}
+
+func (g *GroupedAPIResource) GroupVersion() string {
+	if g.Version == "" {
+		return g.Group
+	}
+	return fmt.Sprint(g.Group, "/", g.Version)
+}
+
+
 
 func ensureAPIResources(stateStore map[uint64]any, contextName string) (APIResources, error) {
 	// TODO RC statestore should just take ints
@@ -115,23 +133,35 @@ func ensureAPIResources(stateStore map[uint64]any, contextName string) (APIResou
 		if err != nil {
 			return nil, fmt.Errorf("err getting resources | %w", err)
 		}
+		var workingResource *GroupedAPIResource
 		var a *metav1.APIResource
 		var i int
 		for _, grp := range *resp {
 			for i = range grp.APIResources {
 				a = &grp.APIResources[i]
-				elem, exists := rv[a.Name]
-				if exists {
-					// TODO RC handle colliding resources
-					fmt.Print(fmt.Errorf("Found collision between %v/%v and %v/%v\n", grp.GroupVersion, a.Name, elem.GroupVersion, elem.ResourceName))
+
+				group, version, err := splitGroupVersion(grp.GroupVersion)
+				if err != nil {
+					return nil, err
 				}
-				rv[a.Name] = &GroupedAPIResource{
+				workingResource = &GroupedAPIResource{
 					ResourceName: a.Name,
-					GroupVersion: grp.GroupVersion,
+					Group: group,
+					Version: version,
+					GroupVersion_: grp.GroupVersion,
 					ShortNames:   a.ShortNames,
 					Namespaced:   a.Namespaced,
 				}
+
+				elem, exists := rv[workingResource.CLIName()]
+				if exists {
+					// TODO DEV this should not get hit, reduce it from a panic later.
+					panic(fmt.Errorf("Found collision between %v/%v and %v/%v\n", grp.GroupVersion, a.Name, elem.GroupVersion, elem.ResourceName))
+				}
+
+				rv[workingResource.CLIName()] = workingResource
 			}
+
 		}
 		stateStore[hash(stateKey)] = rv
 	}
@@ -141,24 +171,17 @@ func ensureAPIResources(stateStore map[uint64]any, contextName string) (APIResou
 func (n *RootResourcesNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	resources, err := ensureAPIResources(n.stateStore, n.contextName)
 	if err != nil {
-		n.err = fmt.Errorf("error while getting API resources | %w", err)
-		fmt.Println(n.err)
-		return fs.NewListDirStream([]fuse.DirEntry{
-			{
-				Name: "error",
-				Ino:  hash(fmt.Sprintf("%v/error", n.Path())),
-				Mode: fuse.S_IFREG,
-			},
-		}), 0
+		n.lastError = fmt.Errorf("error while getting API resources | %w", err)
+		panic(n.lastError)
+		return readDirErrResponse(n.Path())
 	}
 	entries := make([]fuse.DirEntry, 0, len(resources))
-
 	for _, res := range resources {
 		if res.Namespaced != n.namespaced {
 			continue
 		}
 		entries = append(entries, fuse.DirEntry{
-			Name: res.ResourceName,
+			Name: res.CLIName(),
 			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), res.ResourceName)),
 			Mode: syscall.S_IFREG,
 		})
@@ -254,7 +277,7 @@ func (n *APIResourceNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Er
 	if err != nil {
 		panic(err)
 	}
-	results, err := kube.ListResourceNames(ctx, n.groupVersion.GroupVersion, n.groupVersion.ResourceName, n.contextName, n.namespace)
+	results, err := kube.ListResourceNames(ctx, n.groupVersion.GroupVersion(), n.groupVersion.ResourceName, n.contextName, n.namespace)
 	if err != nil {
 		// The filesystem is our interface with the user, so let
 		// errors here be exposed via said interface.
@@ -277,7 +300,7 @@ func (n *APIResourceNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Er
 }
 
 func getAPIResourceStruct(name, contextName, namespace string, groupVersion *GroupedAPIResource, stateStore map[uint64]any) fs.InodeEmbedder {
-	if groupVersion.GroupVersion == "v1" && groupVersion.ResourceName == "pods" {
+	if groupVersion.GroupVersion() == "v1" && groupVersion.ResourceName == "pods" {
 		return &PodObjectsNode{
 			name: name,
 			contextName: contextName,
@@ -380,12 +403,15 @@ func (n *APIResourceActions) Lookup(ctx context.Context, name string, out *fuse.
 
 
 func splitGroupVersion(groupVersion string) (string, string, error) {
+	if groupVersion == "v1" {
+		// The core api is a special case
+		return "v1", "", nil
+	}
 	splat := strings.Split(groupVersion, "/")
 	if len(splat) != 2 {
 		return "", "",
 			fmt.Errorf(
-				"failed to split groupVersion, resource (%v)",
-				" contained an unexpected number of '/' chars.",
+				"failed to split groupVersion, resource (%v) contained an unexpected number of '/' chars.",
 				groupVersion,
 			)
 	}

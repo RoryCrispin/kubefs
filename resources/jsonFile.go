@@ -44,17 +44,9 @@ func (f *GenericJSONFile) Open(ctx context.Context, openFlags uint32) (fh fs.Fil
 		return fh, fuse.FOPEN_DIRECT_IO, 0
 	}
 
-	group, version, err := splitGroupVersion(f.groupVersion.GroupVersion)
-	if err != nil {
-		fh = &roBytesFileHandle{
-			content: []byte(fmt.Sprintf("%#v", err)),
-		}
-		return fh, fuse.FOPEN_DIRECT_IO, 0
-	}
-
 	content, err := kube.GetUnstructured(
 		ctx, f.contextName, f.name,
-		group, version, f.groupVersion.ResourceName, f.namespace,
+		f.groupVersion.Group, f.groupVersion.Version, f.groupVersion.ResourceName, f.namespace,
 	)
 
 	if errors.Is(err, kube.ErrNotFound) {
