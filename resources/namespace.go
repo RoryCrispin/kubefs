@@ -26,7 +26,7 @@ type ListGenericNamespaceNode struct {
 	lastError error
 
 	cli        *k8s.Clientset
-	stateStore map[uint64]interface{}
+	stateStore *State
 }
 
 func (n *ListGenericNamespaceNode) Path() string {

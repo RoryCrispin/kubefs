@@ -25,7 +25,7 @@ type GenericJSONFile struct {
 
 	lastError  error
 	cli        *k8s.Clientset
-	stateStore map[uint64]interface{}
+	stateStore *State
 }
 
 // GenericJSONFile implements Open

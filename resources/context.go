@@ -17,7 +17,7 @@ type RootContextNode struct {
 	// Must embed an Inode for the struct to work as a node.
 	fs.Inode
 
-	stateStore map[uint64]interface{}
+	stateStore *State
 }
 
 func (n *RootContextNode) Path() string {
@@ -26,7 +26,7 @@ func (n *RootContextNode) Path() string {
 
 func NewRootContextNode() *RootContextNode {
 	fmt.Printf(">>> Creating new statestore\n")
-	s := make(map[uint64]interface{})
+	s := NewState()
 	return &RootContextNode{
 		stateStore: s,
 	}
@@ -81,7 +81,7 @@ type RootContextObjectsNode struct {
 	fs.Inode
 
 	name string
-	stateStore map[uint64]interface{}
+	stateStore *State
 }
 
 func (n *RootContextObjectsNode) Path() string {

@@ -26,7 +26,7 @@ type PodObjectsNode struct {
 	contextName string
 
 	cli *k8s.Clientset
-	stateStore map[uint64]any
+	stateStore *State
 }
 
 func (n *PodObjectsNode) Path() uint64 {
@@ -109,7 +109,7 @@ type PodJSONFile struct {
 	contextName string
 
 	cli *k8s.Clientset
-	stateStore map[uint64]interface{}
+	stateStore *State
 }
 
 func (f *PodJSONFile) ensureCLI() error {

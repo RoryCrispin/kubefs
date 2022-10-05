@@ -25,7 +25,7 @@ type RootContainerNode struct {
 	contextName string
 
 	cli *k8s.Clientset
-	stateStore map[uint64]interface{}
+	stateStore *State
 }
 
 func (n *RootContainerNode) Path() string {
@@ -105,7 +105,7 @@ type RootContainerObjectsNode struct {
 	contextName string
 
 	cli *k8s.Clientset
-	stateStore map[uint64]interface{}
+	stateStore *State
 }
 
 // Ensure we are implementing the NodeReaddirer interface
@@ -141,21 +141,19 @@ func (n *RootContainerObjectsNode) Readdir(ctx context.Context) (fs.DirStream, s
 }
 
 func (n *RootContainerObjectsNode) mkContainerExecFile(ctx context.Context) *fs.Inode {
-	inode := hash(fmt.Sprintf("%v/exec", n.Path()))
+	stateKey := fmt.Sprintf("%v/exec", n.Path())
 
 	var node *ContainerExecFile
 
-	elem, exist := n.stateStore[inode]
+	elem, exist := n.stateStore.Get(stateKey)
 	if exist {
 		var ok bool
 		node, ok = elem.(*ContainerExecFile)
 		if !ok {
 			panic("failed type assertion")
-		} else {
-			fmt.Printf("><><> reusing container exec file: %v, %v\n", inode, node.name)
 		}
 	} else  {
-		fmt.Printf("<<><><> Creating new container exec file\n")
+		fmt.Printf("Creating new container exec file\n")
 		node = &ContainerExecFile{
 				name: n.name,
 				pod:      n.pod,
@@ -165,15 +163,14 @@ func (n *RootContainerObjectsNode) mkContainerExecFile(ctx context.Context) *fs.
 				cli: n.cli,
 				stateStore: n.stateStore,
 			}
-		n.stateStore[inode] = node
-
+		n.stateStore.Put(stateKey, node)
 	}
 
 	return n.NewInode(
 		ctx, node,
 		fs.StableAttr{
 			Mode: syscall.S_IFREG,
-			Ino: inode,
+			Ino: hash(stateKey),
 		},
 	)
 
@@ -226,7 +223,7 @@ type ContainerLogsFile struct {
 	contextName string
 
 	cli *k8s.Clientset
-	stateStore map[uint64]interface{}
+	stateStore *State
 }
 
 func (n *ContainerLogsFile) ensureCLI() error {
@@ -295,7 +292,7 @@ type ContainerExecFile struct {
 	mtime   time.Time
 
 	cli *k8s.Clientset
-	stateStore map[uint64]interface{}
+	stateStore *State
 }
 
 var _ = (fs.NodeAccesser)((*ContainerExecFile)(nil))

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
@@ -22,7 +23,7 @@ type ResourceTypeNode struct {
 	fs.Inode
 	contextName string
 
-	stateStore map[uint64]any
+	stateStore *State
 }
 
 func (n *ResourceTypeNode) Path() string {
@@ -74,7 +75,7 @@ type RootResourcesNode struct {
 	contextName string
 	namespaced  bool
 
-	stateStore map[uint64]interface{}
+	stateStore *State
 	lastError        error
 }
 
@@ -108,23 +109,16 @@ func (g *GroupedAPIResource) GroupVersion() string {
 	return fmt.Sprint(g.Group, "/", g.Version)
 }
 
-
-
-func ensureAPIResources(stateStore map[uint64]any, contextName string) (APIResources, error) {
-	// TODO RC statestore should just take ints
-	//
+func ensureAPIResources(stateStore *State, contextName string) (APIResources, error) {
 	stateKey := fmt.Sprintf("%v/api-resources", contextName)
 	rv := make(APIResources)
-	// TODO RC no cache expiry
-	elem, exist := stateStore[hash(stateKey)]
+	elem, exist := stateStore.Get(stateKey)
 	if exist {
 		var ok bool
 		rv, ok = elem.(APIResources)
 		if !ok {
 			panic("failed type assertion")
 		}
-		// TODO the statestore is shared by contexts,
-		// there should be one per context?
 		fmt.Printf("Using cached copy of API-Resources\n")
 	} else {
 		cli, err := kube.GetK8sDiscoveryClient(contextName)
@@ -163,7 +157,8 @@ func ensureAPIResources(stateStore map[uint64]any, contextName string) (APIResou
 			}
 
 		}
-		stateStore[hash(stateKey)] = rv
+		// TODO make this TTL configurable
+		stateStore.PutTTL(stateKey, rv, 1 * time.Minute)
 	}
 	return rv, nil
 }
@@ -243,7 +238,7 @@ type APIResourceNode struct {
 	lastError error
 
 	cli        *k8s.Clientset
-	stateStore map[uint64]interface{}
+	stateStore *State
 }
 
 func (n *APIResourceNode) Path() string {
@@ -299,7 +294,7 @@ func (n *APIResourceNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Er
 	return fs.NewListDirStream(entries), 0
 }
 
-func getAPIResourceStruct(name, contextName, namespace string, groupVersion *GroupedAPIResource, stateStore map[uint64]any) fs.InodeEmbedder {
+func getAPIResourceStruct(name, contextName, namespace string, groupVersion *GroupedAPIResource, stateStore *State) fs.InodeEmbedder {
 	if groupVersion.GroupVersion() == "v1" && groupVersion.ResourceName == "pods" {
 		return &PodObjectsNode{
 			name: name,
@@ -352,7 +347,7 @@ type APIResourceActions struct {
 
 	lastError  error
 	cli        *k8s.Clientset
-	stateStore map[uint64]interface{}
+	stateStore *State
 }
 
 func (n *APIResourceActions) Path() string {

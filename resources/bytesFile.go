@@ -67,7 +67,7 @@ type ErrorFile struct {
 
 	err error
 
-	stateStore map[uint64]interface{}
+	stateStore *State
 }
 
 func (f *ErrorFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
