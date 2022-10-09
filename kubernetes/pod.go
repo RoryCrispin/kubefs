@@ -50,7 +50,7 @@ func GetPodDefinition(ctx context.Context, cli *k8s.Clientset, name, namespace s
 		return nil, err
 	}
 
-	b, err := json.Marshal(pod)
+	b, err := json.MarshalIndent(pod, "", "    ")
 	if err != nil {
 		return nil, err
 	}

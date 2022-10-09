@@ -1,12 +1,10 @@
 package kubernetes
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	schema "k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/dynamic"
@@ -91,27 +89,6 @@ func getK8sUnstructuredClient() dynamic.Interface {
 	}
 
 	return clientset
-}
-
-func getResourcesGeneric(cli dynamic.Interface) {
-	q := schema.GroupVersionResource{
-		Group:    "",
-		Version:  "v1",
-		Resource: "pods",
-	}
-	res, err := cli.Resource(q).List(
-		context.TODO(), metav1.ListOptions{
-			FieldSelector: "name",
-		})
-	if err != nil {
-		panic(err)
-	}
-
-	// b, err := json.Marshal(res.Items)
-	// if err != nil {
-	// 	panic(err)
-	// }
-	fmt.Printf("%#v\n", res.Items)
 }
 
 func GetApiResources(cli *discovery.DiscoveryClient) (*[]*metav1.APIResourceList, error){

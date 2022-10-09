@@ -90,31 +90,31 @@ func getColIndex(colName string, cols *[]metav1.TableColumnDefinition) (int, err
 	return idx, nil
 }
 
-func GetPlaintextREST(ctx context.Context, contextName, name, groupVersion, resource, namespace string) ([]byte, error) {
+// func GetPlaintextREST(ctx context.Context, contextName, name, groupVersion, resource, namespace string) ([]byte, error) {
 
-	config, err := GetK8sClientConfig(contextName)
-	if err != nil {
-		panic(err)
-	}
+// 	config, err := GetK8sClientConfig(contextName)
+// 	if err != nil {
+// 		panic(err)
+// 	}
 
-	cli, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		panic(err)
-	}
+// 	cli, err := kubernetes.NewForConfig(config)
+// 	if err != nil {
+// 		panic(err)
+// 	}
 
-	req := cli.CoreV1().RESTClient().Get()
-	if namespace != "" {
-		req = req.AbsPath("/apis", groupVersion, "namespaces", namespace, resource, name)
-	} else {
-		req = req.AbsPath("/apis", groupVersion, resource, name)
-	}
-	req.SetHeader("Accept", "application/json")
-	resp := req.Do(ctx)
+// 	req := cli.CoreV1().RESTClient().Get()
+// 	if namespace != "" {
+// 		req = req.AbsPath("/apis", groupVersion, "namespaces", namespace, resource, name)
+// 	} else {
+// 		req = req.AbsPath("/apis", groupVersion, resource, name)
+// 	}
+// 	req.SetHeader("Accept", "application/json")
+// 	resp := req.Do(ctx)
 
-	fmt.Printf("RESP: %#v", req.URL())
+// 	fmt.Printf("RESP: %#v", req.URL())
 
-	return resp.Raw()
-}
+// 	return resp.Raw()
+// }
 
 func GetUnstructured(ctx context.Context, contextName, name, group, version, resource, namespace string) ([]byte, error) {
 	cli := getK8sUnstructuredClient()
@@ -138,7 +138,7 @@ func GetUnstructured(ctx context.Context, contextName, name, group, version, res
 		return nil, fmt.Errorf("error encountered while fetching resource definition | %w", err)
 	}
 
-	jsonRv, err :=  json.Marshal(rv)
+	jsonRv, err :=  json.MarshalIndent(rv, "", "    ")
 	if err != nil {
 		return nil, fmt.Errorf("error encountered while marshalling resource definition to json | %w", err)
 	}

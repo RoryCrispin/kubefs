@@ -88,7 +88,6 @@ type APIResources map[string]*GroupedAPIResource
 // GroupdAPIResource is a denormalisation of the metav1.APIResource and GroupVersion
 type GroupedAPIResource struct {
 	ResourceName string
-	GroupVersion_ string
 	ShortNames   []string
 	Namespaced   bool
 	Group string
@@ -142,7 +141,6 @@ func ensureAPIResources(stateStore *State, contextName string) (APIResources, er
 					ResourceName: a.Name,
 					Group: group,
 					Version: version,
-					GroupVersion_: grp.GroupVersion,
 					ShortNames:   a.ShortNames,
 					Namespaced:   a.Namespaced,
 				}
@@ -400,7 +398,7 @@ func (n *APIResourceActions) Lookup(ctx context.Context, name string, out *fuse.
 func splitGroupVersion(groupVersion string) (string, string, error) {
 	if groupVersion == "v1" {
 		// The core api is a special case
-		return "v1", "", nil
+		return "", "v1", nil
 	}
 	splat := strings.Split(groupVersion, "/")
 	if len(splat) != 2 {

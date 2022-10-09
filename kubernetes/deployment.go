@@ -25,7 +25,7 @@ func GetDeployments(ctx context.Context, cli *kubernetes.Clientset, namespace st
 }
 
 func GetDeploymentDefinition(ctx context.Context, cli *kubernetes.Clientset, name, namespace string) ([]byte, error) {
-	pod, err := cli.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
+	rv, err := cli.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if kube_errors.IsNotFound(err) {
 		return nil, ErrNotFound
 	}
@@ -33,7 +33,7 @@ func GetDeploymentDefinition(ctx context.Context, cli *kubernetes.Clientset, nam
 		return nil, err
 	}
 
-	b, err := json.Marshal(pod)
+	b, err := json.MarshalIndent(rv, "", "    ")
 	if err != nil {
 		return nil, err
 	}
