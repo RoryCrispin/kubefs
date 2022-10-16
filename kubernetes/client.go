@@ -3,16 +3,16 @@ package kubernetes
 import (
 	"fmt"
 	"path/filepath"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/discovery"
-	"k8s.io/client-go/rest"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/util/homedir"
-	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
-
 )
 
 type void struct{}
@@ -64,6 +64,8 @@ func GetK8sClient(kCtx string) (*kubernetes.Clientset, error) {
 		return nil, err
 	}
 
+	config.Timeout = 3 * time.Second
+
 	// create the clientset
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
@@ -78,6 +80,7 @@ func getK8sUnstructuredClient() dynamic.Interface {
 
 	// use the current context in kubeconfig
 	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	config.Timeout = 3 * time.Second
 	if err != nil {
 		panic(err.Error())
 	}
@@ -97,7 +100,7 @@ func GetApiResources(cli *discovery.DiscoveryClient) (*[]*metav1.APIResourceList
 	if discovery.IsGroupDiscoveryFailedError(err) {
 		fmt.Printf("WARNING: The Kubernetes server has an orphaned API service. Server reports: %s\n", err)
 		fmt.Printf("WARNING: To fix this, kubectl delete apiservice <service-name>\n")
-	} else {
+	} else if err != nil {
 		return nil, fmt.Errorf("could not get apiVersions from Kubernetes | %w", err)
 	}
 	return &apiResourceList, nil

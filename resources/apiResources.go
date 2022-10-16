@@ -10,6 +10,7 @@ import (
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8s "k8s.io/client-go/kubernetes"
 
 	kube "rorycrispin.co.uk/kubefs/kubernetes"
@@ -95,17 +96,25 @@ type GroupedAPIResource struct {
 }
 
 func (g *GroupedAPIResource) CLIName() string {
-	if g.Version == "" {
+	if g.Group == "" {
 		return g.ResourceName
 	}
 	return fmt.Sprint(g.ResourceName, ".", g.Group)
 }
 
 func (g *GroupedAPIResource) GroupVersion() string {
-	if g.Version == "" {
-		return g.Group
+	if g.Group == "" {
+		return g.Version
 	}
 	return fmt.Sprint(g.Group, "/", g.Version)
+}
+
+func (g *GroupedAPIResource) GVR() *schema.GroupVersionResource {
+	return &schema.GroupVersionResource{
+		Group: g.Group,
+		Version: g.Version,
+		Resource: g.ResourceName,
+	}
 }
 
 func ensureAPIResources(stateStore *State, contextName string) (APIResources, error) {
@@ -165,7 +174,6 @@ func (n *RootResourcesNode) Readdir(ctx context.Context) (fs.DirStream, syscall.
 	resources, err := ensureAPIResources(n.stateStore, n.contextName)
 	if err != nil {
 		n.lastError = fmt.Errorf("error while getting API resources | %w", err)
-		panic(n.lastError)
 		return readDirErrResponse(n.Path())
 	}
 	entries := make([]fuse.DirEntry, 0, len(resources))
@@ -351,11 +359,11 @@ type APIResourceActions struct {
 func (n *APIResourceActions) Path() string {
 	if n.groupVersion.Namespaced {
 		return fmt.Sprintf("%v/resources/%v/%v/namespaces/%v/%v",
-			n.contextName, n.groupVersion.GroupVersion, n.groupVersion.ResourceName, n.namespace, n.name,
+			n.contextName, n.groupVersion.GroupVersion(), n.groupVersion.ResourceName, n.namespace, n.name,
 		)
 	} else {
 		return fmt.Sprintf("%v/resources/%v/%v/%v", //TODO is this shadowed?
-			n.contextName, n.groupVersion.GroupVersion, n.groupVersion.ResourceName, n.name,
+			n.contextName, n.groupVersion.GroupVersion(), n.groupVersion.ResourceName, n.name,
 		)
 	}
 }
@@ -364,6 +372,11 @@ func (n *APIResourceActions) Readdir(ctx context.Context) (fs.DirStream, syscall
 	entries := []fuse.DirEntry{
 		{
 			Name: "def.json",
+			Ino:  hash(fmt.Sprintf("%v/json", n.Path())),
+			Mode: fuse.S_IFDIR,
+		},
+		{
+			Name: "edit.json",
 			Ino:  hash(fmt.Sprintf("%v/json", n.Path())),
 			Mode: fuse.S_IFDIR,
 		},
@@ -376,6 +389,24 @@ func (n *APIResourceActions) Lookup(ctx context.Context, name string, out *fuse.
 	ch := n.NewInode(
 		ctx,
 		&GenericJSONFile{
+			name: n.name,
+			namespace: n.namespace,
+			contextName: n.contextName,
+			groupVersion: n.groupVersion,
+
+			cli: n.cli,
+			stateStore: n.stateStore,
+		},
+		fs.StableAttr{
+			Mode: syscall.S_IFREG,
+			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
+		},
+	)
+	return ch, 0
+	} else if name == "edit.json" {
+	ch := n.NewInode(
+		ctx,
+		&GenericEditableJSONFile{
 			name: n.name,
 			namespace: n.namespace,
 			contextName: n.contextName,

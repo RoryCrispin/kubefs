@@ -64,7 +64,6 @@ func ListResourceNames(ctx context.Context, groupVersion, resource, contextName,
 		return nil, fmt.Errorf("failed to parse response data | %w", err)
 	}
 
-
 	rv := make([]string, len(resTable.Rows))
 	for _, res := range resTable.Rows {
 		rv = append(rv, res.Cells[nameColumnIdx].(string))
@@ -86,45 +85,19 @@ func getColIndex(colName string, cols *[]metav1.TableColumnDefinition) (int, err
 	}
 	if col.Name != colName {
 		return 0, fmt.Errorf("Didn't find column '%v'", colName)
+
 	}
 	return idx, nil
 }
-
-// func GetPlaintextREST(ctx context.Context, contextName, name, groupVersion, resource, namespace string) ([]byte, error) {
-
-// 	config, err := GetK8sClientConfig(contextName)
-// 	if err != nil {
-// 		panic(err)
-// 	}
-
-// 	cli, err := kubernetes.NewForConfig(config)
-// 	if err != nil {
-// 		panic(err)
-// 	}
-
-// 	req := cli.CoreV1().RESTClient().Get()
-// 	if namespace != "" {
-// 		req = req.AbsPath("/apis", groupVersion, "namespaces", namespace, resource, name)
-// 	} else {
-// 		req = req.AbsPath("/apis", groupVersion, resource, name)
-// 	}
-// 	req.SetHeader("Accept", "application/json")
-// 	resp := req.Do(ctx)
-
-// 	fmt.Printf("RESP: %#v", req.URL())
-
-// 	return resp.Raw()
-// }
 
 func GetUnstructured(ctx context.Context, contextName, name, group, version, resource, namespace string) ([]byte, error) {
 	cli := getK8sUnstructuredClient()
 
 	gvr := schema.GroupVersionResource{
-		Group: group,
-		Version: version,
+		Group:    group,
+		Version:  version,
 		Resource: resource,
 	}
-	fmt.Printf("XOYO: getting groupVersion %#v", gvr)
 
 	var rv *unstructured.Unstructured
 	var err error
@@ -138,9 +111,56 @@ func GetUnstructured(ctx context.Context, contextName, name, group, version, res
 		return nil, fmt.Errorf("error encountered while fetching resource definition | %w", err)
 	}
 
-	jsonRv, err :=  json.MarshalIndent(rv, "", "    ")
+	jsonRv, err := json.MarshalIndent(rv, "", "    ")
 	if err != nil {
 		return nil, fmt.Errorf("error encountered while marshalling resource definition to json | %w", err)
 	}
 	return jsonRv, nil
+}
+
+func GetUnstructuredRaw(ctx context.Context, contextName, name, namespace string, gvr *schema.GroupVersionResource) (*unstructured.Unstructured, error) {
+	if gvr == nil {
+		return nil, fmt.Errorf("GetUnstructuredRaw passed nil gvr")
+	}
+	cli := getK8sUnstructuredClient()
+
+
+	var rv *unstructured.Unstructured
+	var err error
+	opts := metav1.GetOptions{}
+	if namespace != "" {
+		rv, err = cli.Resource(*gvr).Namespace(namespace).Get(ctx, name, opts)
+	} else {
+		rv, err = cli.Resource(*gvr).Get(ctx, name, opts)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("error encountered while fetching resource definition | %w", err)
+	}
+
+	return rv, nil
+}
+
+func WriteUnstructured(
+	ctx context.Context, contextName, name, namespace string,
+	gvr *schema.GroupVersionResource,
+	obj *unstructured.Unstructured,
+) (*unstructured.Unstructured, error) {
+	if gvr == nil {
+		return nil, fmt.Errorf("WriteUnstructured passed nil gvr")
+	}
+
+	cli := getK8sUnstructuredClient()
+	opts := metav1.UpdateOptions{
+		FieldValidation: "Strict",
+	}
+	var err error
+	var rv *unstructured.Unstructured
+
+	if namespace != "" {
+		rv, err = cli.Resource(*gvr).Namespace(namespace).Update(ctx, obj, opts)
+	} else {
+		rv, err = cli.Resource(*gvr).Update(ctx, obj, opts)
+	}
+
+	return rv, err
 }
