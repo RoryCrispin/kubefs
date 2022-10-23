@@ -99,8 +99,6 @@ func getLogs(ctx context.Context, cli *k8s.Clientset, pod, container, namespace 
 }
 
 func ExecCommand(ctx context.Context, contextName, pod, container, namespace string, cmd []string) ([]byte, []byte, error) {
-	fmt.Printf("Exec: ctx: %v pod %v container %v namespace %v cmd %v\n", contextName, pod, container, namespace, cmd)
-
 	if contextName != "microk8s" && contextName != "rancher-desktop" {
 		panic("disabling exec on real cluster!")
 	}
@@ -150,8 +148,5 @@ func ExecCommand(ctx context.Context, contextName, pod, container, namespace str
 	if err != nil {
 		return nil, nil, err
 	}
-	so := stdoutBuf.String()
-	fmt.Printf("%v %v :: %v\n",so, stdoutBuf.String(), stderrBuf.String())
-
 	return stdoutBuf.Bytes(), stderrBuf.Bytes(), err
 }

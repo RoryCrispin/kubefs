@@ -7,6 +7,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"go.uber.org/zap"
 	k8s "k8s.io/client-go/kubernetes"
 
 	kube "rorycrispin.co.uk/kubefs/kubernetes"
@@ -27,6 +28,35 @@ type ListGenericNamespaceNode struct {
 
 	cli        *k8s.Clientset
 	stateStore *State
+	log *zap.SugaredLogger
+}
+
+func NewListGenericNamespaceNode(
+	contextName string,
+	groupVersion *GroupedAPIResource,
+
+	cli *k8s.Clientset,
+	stateStore *State,
+	log *zap.SugaredLogger,
+) *ListGenericNamespaceNode {
+	if cli == nil {
+		var err error
+		cli, err = kube.GetK8sClient(contextName)
+		if err != nil {
+			panic("TODO")
+		}
+	}
+	if stateStore == nil || log == nil {
+		return nil
+	}
+	return &ListGenericNamespaceNode{
+		contextName: contextName,
+		groupVersion: groupVersion,
+
+		cli: cli,
+		stateStore: stateStore,
+		log: log,
+	}
 }
 
 func (n *ListGenericNamespaceNode) Path() string {
@@ -80,19 +110,17 @@ func (n *ListGenericNamespaceNode) Readdir(ctx context.Context) (fs.DirStream, s
 func (n *ListGenericNamespaceNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	if name == "error" {
 		// TODO rc return a file whose string contents is the error
-		fmt.Printf("Error is %v", n.lastError)
 		return nil, syscall.ENOENT
+	}
+
+	node := NewAPIResourceNode(n.contextName, name, n.groupVersion, n.stateStore, n.log)
+	if node == nil {
+		panic("TODO")
 	}
 
 	ch := n.NewInode(
 		ctx,
-		&APIResourceNode{
-			namespace:    name,
-			contextName:  n.contextName,
-			groupVersion: n.groupVersion,
-
-			stateStore: n.stateStore,
-		},
+		node,
 		fs.StableAttr{
 			Mode: syscall.S_IFDIR,
 			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),

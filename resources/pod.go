@@ -8,6 +8,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"go.uber.org/zap"
 
 	k8s "k8s.io/client-go/kubernetes"
 	kube "rorycrispin.co.uk/kubefs/kubernetes"
@@ -27,6 +28,27 @@ type PodObjectsNode struct {
 
 	cli *k8s.Clientset
 	stateStore *State
+	log *zap.SugaredLogger
+}
+
+func NewPodObjectsNode(
+	name, namespace, contextName string,
+	cli *k8s.Clientset,
+	stateStore *State,
+	log *zap.SugaredLogger,
+) *PodObjectsNode {
+	if cli == nil || stateStore == nil || log == nil {
+		return nil
+	}
+	return &PodObjectsNode{
+		namespace: namespace,
+		name: name,
+		contextName: contextName,
+
+		cli: cli,
+		stateStore: stateStore,
+		log: log,
+	}
 }
 
 func (n *PodObjectsNode) Path() uint64 {
@@ -61,16 +83,18 @@ func (n *PodObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Err
 
 func (n *PodObjectsNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	if name == "def.json" {
+		node, err := NewPodJSONFile(n.name, n.namespace, n.contextName, n.cli, n.stateStore, n.log)
+		if node == nil {
+			panic("TODO")
+		}
+		if err != nil {
+			n.log.Error("error while constructing PodJSONFile",
+			zap.Error(err))
+			return nil, syscall.ENOENT
+		}
 		ch := n.NewInode(
 			ctx,
-			&PodJSONFile{
-				name: n.name,
-				namespace: n.namespace,
-				contextName: n.contextName,
-
-				cli: n.cli,
-				stateStore: n.stateStore,
-			},
+			node,
 			fs.StableAttr{
 				Mode: syscall.S_IFREG,
 				Ino: hash(fmt.Sprintf("%v/json", n.Path())),
@@ -78,16 +102,23 @@ func (n *PodObjectsNode) Lookup(ctx context.Context, name string, out *fuse.Entr
 		)
 		return ch, 0
 	} else if name == "containers" {
+		node, err := NewRootContainerNode(
+			n.name, n.namespace,
+			n.contextName, n.cli,
+			n.stateStore,
+			n.log,
+		)
+		if node == nil {
+			panic("TODO")
+		}
+		if err != nil {
+			n.log.Error("error while constructing RootContainerNode",
+			zap.Error(err))
+			return nil, syscall.ENOENT
+		}
 		ch := n.NewInode(
 			ctx,
-			&RootContainerNode{
-				pod: n.name,
-				namespace: n.namespace,
-				contextName: n.contextName,
-
-				cli: n.cli,
-				stateStore: n.stateStore,
-			},
+			node,
 			fs.StableAttr{
 				Mode: syscall.S_IFDIR,
 				Ino: hash(fmt.Sprintf("%v/containers", n.Path())),
@@ -110,27 +141,39 @@ type PodJSONFile struct {
 
 	cli *k8s.Clientset
 	stateStore *State
+	log *zap.SugaredLogger
 }
 
-func (f *PodJSONFile) ensureCLI() error {
-	if f.cli != nil {
-		return nil
+func NewPodJSONFile(
+	name, namespace, contextName string,
+	cli *k8s.Clientset,
+	stateStore *State,
+	log *zap.SugaredLogger,
+) (*PodJSONFile, error) {
+	if cli == nil {
+		var err error
+		cli, err = kube.GetK8sClient(contextName)
+		if err != nil {
+			return nil, err
+		}
 	}
-	cli, err := kube.GetK8sClient(f.contextName)
-	if err != nil {
-		return err
+	if stateStore == nil {
+		return nil, nil
 	}
-	f.cli = cli
-	return nil
+	return &PodJSONFile{
+		name: name,
+		namespace: namespace,
+		contextName: contextName,
+		cli: cli,
+		stateStore: stateStore,
+		log:log,
+	}, nil
 }
 
 func (f *PodJSONFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
 	if fuseFlags&(syscall.O_RDWR|syscall.O_WRONLY) != 0 {
-		// disallow writes
 		return nil, 0, syscall.EROFS
 	}
-
-	f.ensureCLI()
 
 	podDef, err := kube.GetPodDefinition(ctx, f.cli, f.name, f.namespace)
 	if errors.Is(err, kube.ErrNotFound) {

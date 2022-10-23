@@ -7,6 +7,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"go.uber.org/zap"
 
 	kube "rorycrispin.co.uk/kubefs/kubernetes"
 )
@@ -18,26 +19,23 @@ type RootContextNode struct {
 	fs.Inode
 
 	stateStore *State
+	log *zap.SugaredLogger
 }
 
 func (n *RootContextNode) Path() string {
 	return ""
 }
 
-func NewRootContextNode() *RootContextNode {
-	fmt.Printf(">>> Creating new statestore\n")
+func NewRootContextNode(log *zap.SugaredLogger) *RootContextNode {
+	log.Debug("Creating new statestore")
 	s := NewState()
 	return &RootContextNode{
 		stateStore: s,
+		log: log,
 	}
 }
 
-var _ = (fs.NodeReaddirer)((*RootContextNode)(nil))
-
-// // Readdir is part of the NodeReaddirer interface
 func (n *RootContextNode) Readdir(_ context.Context) (fs.DirStream, syscall.Errno) {
-	fmt.Printf("READDIR:\n")
-
 	results, err := kube.GetK8sContexts()
 	if err != nil {
 		panic(err)
@@ -58,14 +56,18 @@ func (n *RootContextNode) Readdir(_ context.Context) (fs.DirStream, syscall.Errn
 }
 
 func (n *RootContextNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	fmt.Printf("LOOKUP OF RootContextNode %s' \n", name)
+	node := NewRootContextObjectsNode(
+			name,
 
+			n.stateStore,
+			n.log,
+		)
+	if node == nil {
+		panic("TODO")
+	}
 	ch := n.NewInode(
 		ctx,
-		&RootContextObjectsNode{
-			name: name,
-			stateStore: n.stateStore,
-		},
+		node,
 		fs.StableAttr{
 			Mode: syscall.S_IFDIR,
 			Ino: hash(name),
@@ -75,13 +77,23 @@ func (n *RootContextNode) Lookup(ctx context.Context, name string, out *fuse.Ent
 }
 
 
-
 type RootContextObjectsNode struct {
-	// Must embed an Inode for the struct to work as a node.
 	fs.Inode
 
 	name string
 	stateStore *State
+	log *zap.SugaredLogger
+}
+
+func NewRootContextObjectsNode(name string, stateStore *State, log *zap.SugaredLogger) *RootContextObjectsNode{
+	if stateStore == nil || log == nil {
+		return nil
+	}
+	return &RootContextObjectsNode{
+		name: name,
+		stateStore: stateStore,
+		log: log,
+	}
 }
 
 func (n *RootContextObjectsNode) Path() string {
@@ -89,8 +101,6 @@ func (n *RootContextObjectsNode) Path() string {
 }
 
 func (n *RootContextObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	fmt.Printf("READDIR RootContextObjectsNode: ns: %s %#v\n", n.name, ctx)
-
 	entries := []fuse.DirEntry{
 		{
 			Name: "resources",
@@ -108,12 +118,17 @@ func (n *RootContextObjectsNode) Readdir(ctx context.Context) (fs.DirStream, sys
 
 func (n *RootContextObjectsNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	if name == "resources" {
+		node := NewResourceTypeNode(
+				n.name,
+				n.stateStore,
+				n.log,
+			)
+		if node == nil {
+			panic("TODO")
+		}
 		ch := n.NewInode(
 			ctx,
-			&ResourceTypeNode{
-				contextName: n.name,
-				stateStore: n.stateStore,
-			},
+			node,
 			fs.StableAttr{
 				Mode: syscall.S_IFDIR,
 				Ino: hash(fmt.Sprintf("%v/resources", n.Path())),
@@ -121,9 +136,11 @@ func (n *RootContextObjectsNode) Lookup(ctx context.Context, name string, out *f
 		)
 		return ch, 0
 	} else if name == "config" {
-		fmt.Printf("Looked up config on context: %v", n.name)
+		n.log.Info("config is not yet supported", zap.String("contextName", n.name))
 	}
-	fmt.Printf("LOOKUP OF %s on Context objects node: %s' \n", name, n.name)
-	fmt.Printf("RootContextObjects lookup of unrecognised object type %v, %s", name, name)
+	n.log.Error("lookup of unrecognised object type",
+		zap.String("type", name),
+		zap.String("contextName", n.name))
+
 	return nil, syscall.ENOENT
 }

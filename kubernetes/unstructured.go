@@ -45,7 +45,6 @@ func ListResourceNames(ctx context.Context, groupVersion, resource, contextName,
 	}
 
 	req.SetHeader("Accept", fmt.Sprintf("application/json;as=Table;v=%s;g=%s", metav1.SchemeGroupVersion.Version, metav1.GroupName))
-	fmt.Printf("Requesting %#v\n", req)
 
 	resp := req.Do(ctx)
 	body, err := resp.Raw()

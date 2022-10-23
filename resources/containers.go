@@ -7,17 +7,16 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"go.uber.org/zap"
 
 	k8s "k8s.io/client-go/kubernetes"
 	kube "rorycrispin.co.uk/kubefs/kubernetes"
 )
 
 type RootContainerNode struct {
-	// Must embed an Inode for the struct to work as a node.
 	fs.Inode
 
 	pod       string
@@ -26,6 +25,34 @@ type RootContainerNode struct {
 
 	cli *k8s.Clientset
 	stateStore *State
+	log *zap.SugaredLogger
+}
+
+func NewRootContainerNode(
+	pod       string,
+	namespace string,
+	contextName string,
+
+	cli *k8s.Clientset,
+	stateStore *State,
+	log *zap.SugaredLogger,
+) (*RootContainerNode, error) {
+	if cli == nil {
+		var err error
+		cli, err = kube.GetK8sClient(contextName)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &RootContainerNode{
+		pod: pod,
+		namespace:namespace,
+		contextName: contextName,
+
+		cli: cli,
+		stateStore: stateStore,
+		log: log,
+	}, nil
 }
 
 func (n *RootContainerNode) Path() string {
@@ -35,23 +62,7 @@ func (n *RootContainerNode) Path() string {
 }
 
 
-func (n *RootContainerNode) ensureCLI() error {
-	if n.cli != nil {
-		return nil
-	}
-	cli, err := kube.GetK8sClient(n.contextName)
-	if err != nil {
-		return err
-	}
-	n.cli = cli
-	return nil
-}
-
 func (n *RootContainerNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	fmt.Printf("READDIR RootContainerNode: %#v\n", ctx)
-
-	n.ensureCLI()
-
 	results, err := kube.GetContainers(ctx, n.cli, n.pod, n.namespace)
 	if err != nil {
 		panic(err)
@@ -72,19 +83,18 @@ func (n *RootContainerNode) Readdir(ctx context.Context) (fs.DirStream, syscall.
 }
 
 func (n *RootContainerNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	fmt.Printf("LOOKUP OF %s' \n", name)
-
+	node := NewRootContainerObjectsNode(
+		n.namespace,
+		n.pod, name,
+		n.contextName,
+		n.cli, n.stateStore,
+		n.log)
+	if node == nil {
+		panic("TODO")
+	}
 	ch := n.NewInode(
 		ctx,
-		&RootContainerObjectsNode{
-			namespace: n.namespace,
-			pod:       n.pod,
-			name:      name,
-			contextName: n.contextName,
-
-			cli:       n.cli,
-			stateStore: n.stateStore,
-		},
+		node,
 		fs.StableAttr{
 			Mode: syscall.S_IFDIR,
 			Ino: hash(fmt.Sprintf("%v/%v", n.Path(), name)),
@@ -96,7 +106,6 @@ func (n *RootContainerNode) Lookup(ctx context.Context, name string, out *fuse.E
 // ========== RootContainerObjectsNode ======
 
 type RootContainerObjectsNode struct {
-	// Must embed an Inode for the struct to work as a node.
 	fs.Inode
 
 	namespace string
@@ -106,6 +115,32 @@ type RootContainerObjectsNode struct {
 
 	cli *k8s.Clientset
 	stateStore *State
+	log *zap.SugaredLogger
+}
+
+func NewRootContainerObjectsNode(
+	namespace string,
+	pod       string,
+	name      string,
+	contextName string,
+
+	cli *k8s.Clientset,
+	stateStore *State,
+	log *zap.SugaredLogger,
+) *RootContainerObjectsNode {
+	if cli == nil || stateStore == nil || log == nil {
+		return nil
+	}
+	return &RootContainerObjectsNode{
+		namespace: namespace,
+		pod: pod,
+		name: name,
+		contextName: contextName,
+
+		cli: cli,
+		stateStore: stateStore,
+		log: log,
+	}
 }
 
 // Ensure we are implementing the NodeReaddirer interface
@@ -118,8 +153,6 @@ func (n *RootContainerObjectsNode) Path() string {
 
 var _ = (fs.NodeReaddirer)((*RootContainerObjectsNode)(nil))
 func (n *RootContainerObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	fmt.Printf("READDIR RootContainerObjectsNode: ns: %s %#v\n", n.namespace, ctx)
-
 	entries := []fuse.DirEntry{
 		{
 			Name: "logs",
@@ -153,16 +186,20 @@ func (n *RootContainerObjectsNode) mkContainerExecFile(ctx context.Context) *fs.
 			panic("failed type assertion")
 		}
 	} else  {
-		fmt.Printf("Creating new container exec file\n")
-		node = &ContainerExecFile{
-				name: n.name,
-				pod:      n.pod,
-				namespace: n.namespace,
-				contextName: n.contextName,
+		n.log.Debug("creating new container exec file",
+		zap.String("name", n.name),
+		)
 
-				cli: n.cli,
-				stateStore: n.stateStore,
-			}
+		node = NewContainerExecFile(
+			n.name,
+			n.pod,
+			n.namespace,
+			n.contextName,
+
+			n.cli,
+			n.stateStore,
+			n.log,
+		)
 		n.stateStore.Put(stateKey, node)
 	}
 
@@ -177,11 +214,14 @@ func (n *RootContainerObjectsNode) mkContainerExecFile(ctx context.Context) *fs.
 }
 
 func (n *RootContainerObjectsNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	fmt.Printf("LOOKUP OF %s on RootContainerObjectsNode: %s' \n", name, n.namespace)
 	var previous bool
 	if name == "exec" {
 		ch := n.mkContainerExecFile(ctx)
-		fmt.Printf(">> Assign inode %v to exec file for container %v of pod %v\n", ch.String(), n.name, n.pod)
+		n.log.Debug("assign new inode",
+			zap.String("inode", ch.String()),
+			zap.String("name", n.name),
+			zap.String("pod", n.pod),
+		)
 		return ch, 0
 	}
 	if name == "logs" {
@@ -189,21 +229,26 @@ func (n *RootContainerObjectsNode) Lookup(ctx context.Context, name string, out 
 	} else if name == "logs-previous" {
 		previous = true
 	} else {
-		fmt.Printf("RootContainerObjects lookup of unrecognised object type %v, %s\n", name, name)
+		n.log.Error("RootContainerObjects lookup of unrecognised object type",
+			zap.String("name", name),
+		)
+		return nil, syscall.ENOENT
+	}
+	node, err := NewContainerLogsFile(
+		n.name, n.pod, n.namespace, previous, n.contextName,
+		n.cli, n.stateStore, n.log)
+	if node == nil {
+		panic("TODO")
+	}
+	if err != nil {
+		n.log.Error("RootContainerObjects wrror while constructing RootContainerLogsFile",
+			zap.String("name", name), zap.Error(err),
+		)
 		return nil, syscall.ENOENT
 	}
 	ch := n.NewInode(
 		ctx,
-		&ContainerLogsFile{
-			name: n.name,
-			pod:      n.pod,
-			namespace: n.namespace,
-			previous: previous,
-			contextName: n.contextName,
-
-			cli: n.cli,
-			stateStore: n.stateStore,
-		},
+		node,
 		fs.StableAttr{
 			Mode: syscall.S_IFREG,
 			Ino: hash(fmt.Sprintf("%v/%v", n.Path(), name)),
@@ -224,30 +269,47 @@ type ContainerLogsFile struct {
 
 	cli *k8s.Clientset
 	stateStore *State
+	log *zap.SugaredLogger
 }
 
-func (n *ContainerLogsFile) ensureCLI() error {
-	if n.cli != nil {
-		return nil
-	}
-	cli, err := kube.GetK8sClient(n.contextName)
-	if err != nil {
-		return err
-	}
-	n.cli = cli
-	return nil
-}
+func NewContainerLogsFile(
+	name      string,
+	pod       string,
+	namespace string,
+	previous bool,
+	contextName string,
 
-var _ = (fs.NodeOpener)((*ContainerLogsFile)(nil))
+	cli *k8s.Clientset,
+	stateStore *State,
+	log *zap.SugaredLogger,
+) (*ContainerLogsFile, error) {
+	if cli == nil {
+		var err error
+		cli, err = kube.GetK8sClient(contextName)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if log == nil || stateStore == nil {
+		return nil, nil
+	}
+	return &ContainerLogsFile{
+		name: name,
+		pod: pod,
+		namespace: namespace,
+		previous: previous,
+		contextName: contextName,
+
+		cli: cli,
+		stateStore: stateStore,
+		log: log,
+	}, nil
+}
 
 func (f *ContainerLogsFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
-	fmt.Printf("Open logs\n")
-	// disallow writes
 	if fuseFlags&(syscall.O_RDWR|syscall.O_WRONLY) != 0 {
 		return nil, 0, syscall.EROFS
 	}
-
-	f.ensureCLI()
 
 	var logs []byte
 	var err error
@@ -258,7 +320,7 @@ func (f *ContainerLogsFile) Open(ctx context.Context, openFlags uint32) (fh fs.F
 	}
 
 	if errors.Is(err, kube.ErrNotFound) {
-		fmt.Printf("Err not found while opening logs\n")
+		f.log.Warn("err not found while opening", zap.String("file", f.name))
 		return nil, 0, syscall.ENOENT
 	}
 	if err != nil {
@@ -272,7 +334,6 @@ func (f *ContainerLogsFile) Open(ctx context.Context, openFlags uint32) (fh fs.F
 		content: logs,
 	}
 
-	// Return FOPEN_DIRECT_IO so content is not cached.
 	return fh, fuse.FOPEN_DIRECT_IO, 0
 }
 
@@ -289,13 +350,36 @@ type ContainerExecFile struct {
 	// synchronization.
 	mu      sync.Mutex
 	content []byte
-	mtime   time.Time
 
 	cli *k8s.Clientset
 	stateStore *State
+	log *zap.SugaredLogger
 }
 
-var _ = (fs.NodeAccesser)((*ContainerExecFile)(nil))
+func NewContainerExecFile(
+	name      string,
+	pod       string,
+	namespace string,
+	contextName string,
+
+	cli *k8s.Clientset,
+	stateStore *State,
+	log *zap.SugaredLogger,
+) *ContainerExecFile {
+	if cli == nil || stateStore == nil {
+		return nil
+	}
+	return &ContainerExecFile{
+		name: name,
+		pod: pod,
+		namespace: namespace,
+		contextName: contextName,
+		cli: cli,
+		stateStore: stateStore,
+		log:log,
+	}
+}
+
 // Access reports whether a directory can be accessed by the caller.
 func (fdn *ContainerExecFile) Access(ctx context.Context, mask uint32) syscall.Errno {
 	// TODO: parse the mask and return a more correct value instead of always
@@ -303,21 +387,15 @@ func (fdn *ContainerExecFile) Access(ctx context.Context, mask uint32) syscall.E
 	return syscall.F_OK
 }
 
-var _ = (fs.NodeOpener)((*ContainerExecFile)(nil))
-
 func (f *ContainerExecFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
 	fh = &rwBytesFileHandle{}
-	fmt.Printf("OPEN exec file for container %v on pod == %v'\n", f.name, f.pod)
 
 	return fh, fuse.FOPEN_DIRECT_IO, 0
 }
 
-// Implement handleless write.
-var _ = (fs.NodeWriter)((*ContainerExecFile)(nil))
-
 func (bn *ContainerExecFile) Write(ctx context.Context, fh fs.FileHandle, buf []byte, off int64) (uint32, syscall.Errno) {
 	if off != 0 {
-		fmt.Printf("Write with offset neq 0 (was %v)\n", off)
+		panic("TODO support exec large chunks.")
 	}
 
 	cmd := strings.Split(strings.TrimSpace(string(buf)), " ")
@@ -327,11 +405,15 @@ func (bn *ContainerExecFile) Write(ctx context.Context, fh fs.FileHandle, buf []
 		bn.pod, bn.name, bn.namespace,
 		cmd,
 	)
-	fmt.Printf("stdout: %v, stderr: %v\n", stdOut, stdErr)
+	bn.log.Info(
+		zap.ByteString("stdout", stdOut),
+		zap.ByteString("stderr", stdErr),
+	)
 	if err != nil {
 		eout := fmt.Errorf("err while executing: %w", err)
-		fmt.Print(eout, "\n")
 		bn.content = []byte(fmt.Sprint(eout))
+
+		//TODO use EREMOTEIO on linux arch
 		//return 0, syscall.EREMOTEIO
 		return 0, syscall.ENOENT
 	}
@@ -343,19 +425,13 @@ func (bn *ContainerExecFile) Write(ctx context.Context, fh fs.FileHandle, buf []
 	// 	// bn.resize(uint64(off + sz))
 	// }
 	copy(bn.content[off:], buf)
-	bn.mtime = time.Now()
 
 	bn.content = stdOut
 
-	// We report back to the filesytem that the number of bytes sent to us were
-	// written, even though we stored the response in the file.
 	return uint32(sz), 0
 }
 
-var _ = (fs.NodeReader)((*ContainerExecFile)(nil))
-
 func (bn *ContainerExecFile) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
-	fmt.Printf(">> execfile READ offset=%v : %v\n", off, string(bn.content))
 	bn.mu.Lock()
 	defer bn.mu.Unlock()
 

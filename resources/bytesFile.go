@@ -1,16 +1,17 @@
 package resources
 
 import (
-	"context"
-	"syscall"
-	"fmt"
-	"encoding/json"
 	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
-	k8s "k8s.io/client-go/kubernetes"
+	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	k8s "k8s.io/client-go/kubernetes"
 
 	kube "rorycrispin.co.uk/kubefs/kubernetes"
 )
@@ -24,7 +25,6 @@ type roBytesFileHandle struct {
 var _ = (fs.FileReader)((*roBytesFileHandle)(nil))
 
 func (fh *roBytesFileHandle) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
-	fmt.Printf(">> Read roBytesFileHandle")
 	end := off + int64(len(dest))
 	if end > int64(len(fh.content)) {
 		end = int64(len(fh.content))
@@ -40,7 +40,6 @@ type rwBytesFileHandle struct {
 var _ = (fs.FileReader)((*rwBytesFileHandle)(nil))
 
 func (fh *rwBytesFileHandle) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
-	fmt.Printf(">> Read rwBytesFileHandle")
 	end := off + int64(len(dest))
 	if end > int64(len(fh.content)) {
 		end = int64(len(fh.content))
@@ -52,19 +51,16 @@ func (fh *rwBytesFileHandle) Read(ctx context.Context, dest []byte, off int64) (
 }
 
 func (fh *rwBytesFileHandle) Write(ctx context.Context, data []byte, off int64) (written uint32, errno syscall.Errno) {
-	fmt.Printf("rwBytesFileWrite == %v\n", string(data))
 	writtenSize := uint32(len(data))
 
 	return writtenSize, 0
 }
 
 func (fh *rwBytesFileHandle) Setattr(ctx context.Context, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
-	fmt.Printf("rwBytesFileSetattr \n")
 	return 0
 }
 
 func (fh *rwBytesFileHandle) Fsync(ctx context.Context, flags uint32) syscall.Errno {
-	fmt.Printf("rwBytesFileFsync, flags: %b\n", flags)
 	return 0
 }
 
@@ -80,7 +76,6 @@ type ErrorFile struct {
 
 func (f *ErrorFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
 	if fuseFlags&(syscall.O_RDWR|syscall.O_WRONLY) != 0 {
-		// disallow writes
 		return nil, 0, syscall.EROFS
 	}
 
@@ -107,7 +102,36 @@ type editableJSONFileHandle struct {
 	lastError  error
 	cli        *k8s.Clientset
 	stateStore *State
+	log *zap.SugaredLogger
 
+}
+
+func NewEditableJSONFileHandle(
+	content *unstructured.Unstructured,
+
+	name         string,
+	namespace    string,
+	contextName  string,
+	groupVersion *GroupedAPIResource,
+
+	cli        *k8s.Clientset,
+	stateStore *State,
+	log *zap.SugaredLogger,
+) *editableJSONFileHandle {
+	if groupVersion == nil || cli == nil || stateStore == nil || log == nil {
+		return nil
+	}
+
+	return &editableJSONFileHandle{
+		content: content,
+		name: name,
+		namespace: namespace,
+		contextName: contextName,
+		groupVersion: groupVersion,
+		cli: cli,
+		stateStore: stateStore,
+		log: log,
+	}
 }
 
 type safeContent struct {
@@ -124,7 +148,6 @@ func (fh *editableJSONFileHandle) GetSafeContent() ([]byte, error) {
 }
 
 func (fh *editableJSONFileHandle) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
-	fmt.Printf(">> Read editableJSONFileHandle")
 	content, err := fh.GetSafeContent()
 	if err != nil {
 		// TODO rc
@@ -141,7 +164,6 @@ func (fh *editableJSONFileHandle) Read(ctx context.Context, dest []byte, off int
 }
 
 func (fh *editableJSONFileHandle) Write(ctx context.Context, data []byte, off int64) (written uint32, errno syscall.Errno) {
-	fmt.Printf("rwBytesFileWrite == %v\n", string(data))
 	if off == 0 {
 		fh.buf = *bytes.NewBuffer(data)
 	} else {
@@ -151,7 +173,7 @@ func (fh *editableJSONFileHandle) Write(ctx context.Context, data []byte, off in
 	complete := &safeContent{}
 	err := json.Unmarshal(fh.buf.Bytes(), complete)
 	if err != nil {
-		fmt.Printf("JSON Marshal Error - assume we haven't finished writing the file yet... %v\n", err)
+		fh.log.Debug("JSON marshal error. assuming we haven't finidhed writing the file yet...", zap.Error(err))
 	} else {
 		if !complete.UnlockEdit {
 			return 0, syscall.EROFS
@@ -162,22 +184,19 @@ func (fh *editableJSONFileHandle) Write(ctx context.Context, data []byte, off in
 			complete.Content,
 		)
 		if err != nil {
-			fmt.Printf("Error while writing: %v\n", err)
+			fh.lastError = err
 			return 0, syscall.ESTALE
 		}
 	}
 
 	writtenSize := uint32(len(data))
-	fmt.Printf("WROTE at offset %v = writtenSize was %v\n", off, writtenSize)
 	return writtenSize, 0
 }
 
 func (fh *editableJSONFileHandle) Setattr(ctx context.Context, in *fuse.SetAttrIn, out *fuse.AttrOut) syscall.Errno {
-	fmt.Printf("rwBytesFileSetattr \n")
 	return 0
 }
 
 func (fh *editableJSONFileHandle) Fsync(ctx context.Context, flags uint32) syscall.Errno {
-	fmt.Printf("rwBytesFileFsync, flags: %b\n", flags)
 	return 0
 }

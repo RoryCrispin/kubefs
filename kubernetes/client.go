@@ -9,6 +9,7 @@ import (
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"go.uber.org/zap"
 	_ "k8s.io/client-go/plugin/pkg/client/auth/gcp"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -94,12 +95,14 @@ func getK8sUnstructuredClient() dynamic.Interface {
 	return clientset
 }
 
-func GetApiResources(cli *discovery.DiscoveryClient) (*[]*metav1.APIResourceList, error){
+func GetApiResources(log *zap.SugaredLogger, cli *discovery.DiscoveryClient) (*[]*metav1.APIResourceList, error){
 
 	apiResourceList, err := cli.ServerPreferredResources()
 	if discovery.IsGroupDiscoveryFailedError(err) {
-		fmt.Printf("WARNING: The Kubernetes server has an orphaned API service. Server reports: %s\n", err)
-		fmt.Printf("WARNING: To fix this, kubectl delete apiservice <service-name>\n")
+		log.Info("the Kubernetes server has an orphaned API service",
+			zap.Error(err),
+			zap.String("fix", "kubectl delete apiservice <service-name>"),
+		)
 	} else if err != nil {
 		return nil, fmt.Errorf("could not get apiVersions from Kubernetes | %w", err)
 	}

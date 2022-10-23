@@ -9,6 +9,7 @@ import (
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8s "k8s.io/client-go/kubernetes"
@@ -25,6 +26,18 @@ type ResourceTypeNode struct {
 	contextName string
 
 	stateStore *State
+	log        *zap.SugaredLogger
+}
+
+func NewResourceTypeNode(contextName string, stateStore *State, log *zap.SugaredLogger) *ResourceTypeNode {
+	if stateStore == nil || log == nil {
+		return nil
+	}
+	return &ResourceTypeNode{
+		contextName: contextName,
+		stateStore:  stateStore,
+		log:         log,
+	}
 }
 
 func (n *ResourceTypeNode) Path() string {
@@ -51,14 +64,15 @@ func (n *ResourceTypeNode) Lookup(ctx context.Context, name string, out *fuse.En
 	if name != "namespaced" && name != "cluster" {
 		return nil, syscall.ENOENT
 	}
+
+	node := NewRootResourcesNode(n.contextName, name == "namespaced", n.stateStore, n.log)
+	if node == nil {
+		panic("TODO")
+	}
+
 	ch := n.NewInode(
 		ctx,
-		&RootResourcesNode{
-			namespaced:  name == "namespaced",
-			contextName: n.contextName,
-
-			stateStore: n.stateStore,
-		},
+		node,
 		fs.StableAttr{
 			Mode: syscall.S_IFDIR,
 			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
@@ -77,7 +91,23 @@ type RootResourcesNode struct {
 	namespaced  bool
 
 	stateStore *State
-	lastError        error
+	lastError  error
+	log        *zap.SugaredLogger
+}
+
+func NewRootResourcesNode(
+	contextName string, namespaced bool,
+	stateStore *State, log *zap.SugaredLogger,
+) *RootResourcesNode {
+	if stateStore == nil || log == nil {
+		return nil
+	}
+	return &RootResourcesNode{
+		contextName: contextName,
+		namespaced:  namespaced,
+		stateStore:  stateStore,
+		log:         log,
+	}
 }
 
 func (n *RootResourcesNode) Path() string {
@@ -91,8 +121,8 @@ type GroupedAPIResource struct {
 	ResourceName string
 	ShortNames   []string
 	Namespaced   bool
-	Group string
-	Version string
+	Group        string
+	Version      string
 }
 
 func (g *GroupedAPIResource) CLIName() string {
@@ -111,13 +141,13 @@ func (g *GroupedAPIResource) GroupVersion() string {
 
 func (g *GroupedAPIResource) GVR() *schema.GroupVersionResource {
 	return &schema.GroupVersionResource{
-		Group: g.Group,
-		Version: g.Version,
+		Group:    g.Group,
+		Version:  g.Version,
 		Resource: g.ResourceName,
 	}
 }
 
-func ensureAPIResources(stateStore *State, contextName string) (APIResources, error) {
+func ensureAPIResources(log *zap.SugaredLogger, stateStore *State, contextName string) (APIResources, error) {
 	stateKey := fmt.Sprintf("%v/api-resources", contextName)
 	rv := make(APIResources)
 	elem, exist := stateStore.Get(stateKey)
@@ -127,11 +157,10 @@ func ensureAPIResources(stateStore *State, contextName string) (APIResources, er
 		if !ok {
 			panic("failed type assertion")
 		}
-		fmt.Printf("Using cached copy of API-Resources\n")
 	} else {
 		cli, err := kube.GetK8sDiscoveryClient(contextName)
 
-		resp, err := kube.GetApiResources(cli)
+		resp, err := kube.GetApiResources(log, cli)
 		if err != nil {
 			return nil, fmt.Errorf("err getting resources | %w", err)
 		}
@@ -148,8 +177,8 @@ func ensureAPIResources(stateStore *State, contextName string) (APIResources, er
 				}
 				workingResource = &GroupedAPIResource{
 					ResourceName: a.Name,
-					Group: group,
-					Version: version,
+					Group:        group,
+					Version:      version,
 					ShortNames:   a.ShortNames,
 					Namespaced:   a.Namespaced,
 				}
@@ -157,7 +186,7 @@ func ensureAPIResources(stateStore *State, contextName string) (APIResources, er
 				elem, exists := rv[workingResource.CLIName()]
 				if exists {
 					// TODO DEV this should not get hit, reduce it from a panic later.
-					panic(fmt.Errorf("Found collision between %v/%v and %v/%v\n", grp.GroupVersion, a.Name, elem.GroupVersion, elem.ResourceName))
+					panic(fmt.Errorf("Found collision between %v/%v and %v/%v\n", grp.GroupVersion, a.Name, elem.GroupVersion(), elem.ResourceName))
 				}
 
 				rv[workingResource.CLIName()] = workingResource
@@ -165,13 +194,13 @@ func ensureAPIResources(stateStore *State, contextName string) (APIResources, er
 
 		}
 		// TODO make this TTL configurable
-		stateStore.PutTTL(stateKey, rv, 1 * time.Minute)
+		stateStore.PutTTL(stateKey, rv, 1*time.Minute)
 	}
 	return rv, nil
 }
 
 func (n *RootResourcesNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	resources, err := ensureAPIResources(n.stateStore, n.contextName)
+	resources, err := ensureAPIResources(n.log, n.stateStore, n.contextName)
 	if err != nil {
 		n.lastError = fmt.Errorf("error while getting API resources | %w", err)
 		return readDirErrResponse(n.Path())
@@ -191,9 +220,9 @@ func (n *RootResourcesNode) Readdir(ctx context.Context) (fs.DirStream, syscall.
 }
 
 func (n *RootResourcesNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	resources, err := ensureAPIResources(n.stateStore, n.contextName)
+	resources, err := ensureAPIResources(n.log, n.stateStore, n.contextName)
 	if err != nil {
-		fmt.Printf("Error while looking up Resource %v | %v", name, err)
+		n.log.Error("error while looking up resource", zap.String("resource", name), zap.Error(err))
 		return nil, syscall.ENOENT
 	}
 	elem, exists := resources[name]
@@ -201,27 +230,28 @@ func (n *RootResourcesNode) Lookup(ctx context.Context, name string, out *fuse.E
 		return nil, syscall.ENOENT
 	}
 	if elem.Namespaced {
-		ch := n.NewInode(ctx, &ListGenericNamespaceNode{
-			contextName:  n.contextName,
-			groupVersion: elem,
-			stateStore:   n.stateStore,
+
+		node := NewListGenericNamespaceNode(
+			n.contextName, elem, nil, n.stateStore, n.log)
+		if node == nil {
+			panic("TODO")
+		}
+
+		ch := n.NewInode(ctx, node, fs.StableAttr{
+			Mode: syscall.S_IFDIR,
+			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
 		},
-			fs.StableAttr{
-				Mode: syscall.S_IFDIR,
-				Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
-			},
 		)
 		return ch, 0
 	} else {
-		ch := n.NewInode(ctx, &APIResourceNode{
-			contextName:  n.contextName,
-			groupVersion: elem,
-			stateStore:   n.stateStore,
+		node := NewAPIResourceNode(n.contextName, "", elem, n.stateStore, n.log)
+		if node == nil {
+			panic("TODO")
+		}
+		ch := n.NewInode(ctx, node, fs.StableAttr{
+			Mode: syscall.S_IFDIR,
+			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
 		},
-			fs.StableAttr{
-				Mode: syscall.S_IFDIR,
-				Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
-			},
 		)
 		return ch, 0
 	}
@@ -245,16 +275,36 @@ type APIResourceNode struct {
 
 	cli        *k8s.Clientset
 	stateStore *State
+	log        *zap.SugaredLogger
+}
+
+func NewAPIResourceNode(
+	contextName string, namespace string,
+	groupVersion *GroupedAPIResource,
+	stateStore *State, log *zap.SugaredLogger,
+) *APIResourceNode {
+	if stateStore == nil || log == nil {
+		return nil
+	}
+	return &APIResourceNode{
+		contextName: contextName,
+
+		groupVersion: groupVersion,
+		namespace:    namespace,
+
+		stateStore: stateStore,
+		log:        log,
+	}
 }
 
 func (n *APIResourceNode) Path() string {
 	if n.groupVersion.Namespaced {
 		return fmt.Sprintf("%v/resources/%v/%v/namespaces/%v",
-			n.contextName, n.groupVersion.GroupVersion, n.groupVersion.ResourceName, n.namespace,
+			n.contextName, n.groupVersion.GroupVersion(), n.groupVersion.ResourceName, n.namespace,
 		)
 	} else {
 		return fmt.Sprintf("%v/resources/%v/%v", //TODO is this shadowed?
-			n.contextName, n.groupVersion.GroupVersion, n.groupVersion.ResourceName,
+			n.contextName, n.groupVersion.GroupVersion(), n.groupVersion.ResourceName,
 		)
 	}
 }
@@ -300,24 +350,22 @@ func (n *APIResourceNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Er
 	return fs.NewListDirStream(entries), 0
 }
 
-func getAPIResourceStruct(name, contextName, namespace string, groupVersion *GroupedAPIResource, stateStore *State) fs.InodeEmbedder {
+func getAPIResourceStruct(name, contextName, namespace string, groupVersion *GroupedAPIResource,
+	cli *k8s.Clientset,
+	stateStore *State, log *zap.SugaredLogger) fs.InodeEmbedder {
 	if groupVersion.GroupVersion() == "v1" && groupVersion.ResourceName == "pods" {
-		return &PodObjectsNode{
-			name: name,
-			contextName: contextName,
-			namespace: namespace,
 
-			stateStore: stateStore,
+		node := NewPodObjectsNode(name, namespace, contextName, cli, stateStore, log)
+		if node == nil {
+			panic("TODO")
 		}
+		return node
 	} else {
-		return &APIResourceActions{
-			name: name,
-			contextName: contextName,
-			namespace: namespace,
-			groupVersion: groupVersion,
-
-			stateStore: stateStore,
+		node := NewAPIResourceActions(name, namespace, contextName, groupVersion, cli, stateStore, log)
+		if node == nil {
+			panic("TODO")
 		}
+		return node
 	}
 
 }
@@ -325,11 +373,14 @@ func getAPIResourceStruct(name, contextName, namespace string, groupVersion *Gro
 func (n *APIResourceNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	if name == "error" {
 		// TODO rc return a file whose string contents is the error
-		fmt.Printf("Error is %v", n.lastError)
+		n.log.Error(zap.Error(n.lastError))
 		return nil, syscall.ENOENT
 	}
 
-	node := getAPIResourceStruct(name, n.contextName, n.namespace, n.groupVersion, n.stateStore)
+	node := getAPIResourceStruct(name, n.contextName, n.namespace, n.groupVersion, n.cli, n.stateStore, n.log)
+	if node == nil {
+		panic("TODO")
+	}
 
 	ch := n.NewInode(
 		ctx,
@@ -342,18 +393,42 @@ func (n *APIResourceNode) Lookup(ctx context.Context, name string, out *fuse.Ent
 	return ch, 0
 }
 
-
 type APIResourceActions struct {
 	fs.Inode
 
+	contextName string
+
 	name         string
 	namespace    string
-	contextName  string
 	groupVersion *GroupedAPIResource
 
 	lastError  error
 	cli        *k8s.Clientset
 	stateStore *State
+	log        *zap.SugaredLogger
+}
+
+func NewAPIResourceActions(
+	name, namespace, contextName string,
+	groupVersion *GroupedAPIResource,
+	cli *k8s.Clientset,
+	stateStore *State,
+	log *zap.SugaredLogger,
+) *APIResourceActions {
+	if groupVersion == nil || cli == nil || log == nil {
+		return nil
+	}
+	return &APIResourceActions{
+		contextName: contextName,
+
+		name:         name,
+		namespace:    namespace,
+		groupVersion: groupVersion,
+
+		cli:        cli,
+		stateStore: stateStore,
+		log:        log,
+	}
 }
 
 func (n *APIResourceActions) Path() string {
@@ -386,45 +461,34 @@ func (n *APIResourceActions) Readdir(ctx context.Context) (fs.DirStream, syscall
 
 func (n *APIResourceActions) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	if name == "def.json" {
-	ch := n.NewInode(
-		ctx,
-		&GenericJSONFile{
-			name: n.name,
-			namespace: n.namespace,
-			contextName: n.contextName,
-			groupVersion: n.groupVersion,
-
-			cli: n.cli,
-			stateStore: n.stateStore,
-		},
-		fs.StableAttr{
-			Mode: syscall.S_IFREG,
-			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
-		},
-	)
-	return ch, 0
+		node := NewGenericJSONFile(n.name, n.namespace, n.contextName, n.groupVersion, n.cli, n.stateStore, n.log)
+		if node == nil {
+			panic("TODO")
+		}
+		ch := n.NewInode(
+			ctx, node,
+			fs.StableAttr{
+				Mode: syscall.S_IFREG,
+				Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
+			},
+		)
+		return ch, 0
 	} else if name == "edit.json" {
-	ch := n.NewInode(
-		ctx,
-		&GenericEditableJSONFile{
-			name: n.name,
-			namespace: n.namespace,
-			contextName: n.contextName,
-			groupVersion: n.groupVersion,
-
-			cli: n.cli,
-			stateStore: n.stateStore,
-		},
-		fs.StableAttr{
-			Mode: syscall.S_IFREG,
-			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
-		},
-	)
-	return ch, 0
+		node := NewGenericJSONFile(n.name, n.namespace, n.contextName, n.groupVersion, n.cli, n.stateStore, n.log)
+		if node == nil {
+			panic("TODO")
+		}
+		ch := n.NewInode(
+			ctx, node,
+			fs.StableAttr{
+				Mode: syscall.S_IFREG,
+				Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
+			},
+		)
+		return ch, 0
 	}
 	return nil, syscall.ENOENT
 }
-
 
 func splitGroupVersion(groupVersion string) (string, string, error) {
 	if groupVersion == "v1" {
@@ -441,4 +505,3 @@ func splitGroupVersion(groupVersion string) (string, string, error) {
 	}
 	return splat[0], splat[1], nil
 }
-
