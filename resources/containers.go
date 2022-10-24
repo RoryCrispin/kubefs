@@ -150,7 +150,6 @@ func (n *RootContainerObjectsNode) Path() string {
 	)
 }
 
-
 var _ = (fs.NodeReaddirer)((*RootContainerObjectsNode)(nil))
 func (n *RootContainerObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	entries := []fuse.DirEntry{

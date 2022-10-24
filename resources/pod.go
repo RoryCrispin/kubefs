@@ -57,9 +57,6 @@ func (n *PodObjectsNode) Path() uint64 {
 	))
 }
 
-// Ensure we are implementing the NodeReaddirer interface
-var _ = (fs.NodeReaddirer)((*PodObjectsNode)(nil))
-
 func (n *PodObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	entries := []fuse.DirEntry{
 		{

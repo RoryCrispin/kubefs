@@ -22,8 +22,6 @@ type roBytesFileHandle struct {
 	content []byte
 }
 
-var _ = (fs.FileReader)((*roBytesFileHandle)(nil))
-
 func (fh *roBytesFileHandle) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
 	end := off + int64(len(dest))
 	if end > int64(len(fh.content)) {
@@ -36,8 +34,6 @@ func (fh *roBytesFileHandle) Read(ctx context.Context, dest []byte, off int64) (
 type rwBytesFileHandle struct {
 	content []byte
 }
-
-var _ = (fs.FileReader)((*rwBytesFileHandle)(nil))
 
 func (fh *rwBytesFileHandle) Read(ctx context.Context, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
 	end := off + int64(len(dest))

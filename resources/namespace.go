@@ -65,8 +65,6 @@ func (n *ListGenericNamespaceNode) Path() string {
 	)
 }
 
-var _ = (fs.NodeReaddirer)((*ListGenericNamespaceNode)(nil))
-
 func (n *ListGenericNamespaceNode) ensureClientSet() error {
 	if n.cli != nil {
 		return nil
@@ -113,9 +111,13 @@ func (n *ListGenericNamespaceNode) Lookup(ctx context.Context, name string, out 
 		return nil, syscall.ENOENT
 	}
 
-	node := NewAPIResourceNode(n.contextName, name, n.groupVersion, n.stateStore, n.log)
+	node, err := NewAPIResourceNode(n.contextName, name, n.groupVersion, n.stateStore, n.log)
 	if node == nil {
 		panic("TODO")
+	}
+	if err != nil {
+		// TODO
+		return nil, syscall.ENOENT
 	}
 
 	ch := n.NewInode(

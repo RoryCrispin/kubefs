@@ -222,7 +222,8 @@ func (n *RootResourcesNode) Readdir(ctx context.Context) (fs.DirStream, syscall.
 func (n *RootResourcesNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	resources, err := ensureAPIResources(n.log, n.stateStore, n.contextName)
 	if err != nil {
-		n.log.Error("error while looking up resource", zap.String("resource", name), zap.Error(err))
+		n.log.Error("error while looking up resource",
+		zap.String("resource", name), zap.Error(err))
 		return nil, syscall.ENOENT
 	}
 	elem, exists := resources[name]
@@ -244,7 +245,11 @@ func (n *RootResourcesNode) Lookup(ctx context.Context, name string, out *fuse.E
 		)
 		return ch, 0
 	} else {
-		node := NewAPIResourceNode(n.contextName, "", elem, n.stateStore, n.log)
+		node, err := NewAPIResourceNode(n.contextName, "", elem, n.stateStore, n.log)
+		if err != nil {
+			// TODO
+			return nil, syscall.ENOENT
+		}
 		if node == nil {
 			panic("TODO")
 		}
@@ -282,10 +287,16 @@ func NewAPIResourceNode(
 	contextName string, namespace string,
 	groupVersion *GroupedAPIResource,
 	stateStore *State, log *zap.SugaredLogger,
-) *APIResourceNode {
+) (*APIResourceNode, error) {
 	if stateStore == nil || log == nil {
-		return nil
+		return nil, nil
 	}
+	var err error
+	cli, err := kube.GetK8sClient(contextName)
+	if err != nil {
+		return nil, err
+	}
+
 	return &APIResourceNode{
 		contextName: contextName,
 
@@ -294,7 +305,8 @@ func NewAPIResourceNode(
 
 		stateStore: stateStore,
 		log:        log,
-	}
+		cli: cli,
+	}, nil
 }
 
 func (n *APIResourceNode) Path() string {
@@ -308,8 +320,6 @@ func (n *APIResourceNode) Path() string {
 		)
 	}
 }
-
-var _ = (fs.NodeReaddirer)((*APIResourceNode)(nil))
 
 func (n *APIResourceNode) ensureClientSet() error {
 	if n.cli != nil {
@@ -350,9 +360,12 @@ func (n *APIResourceNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Er
 	return fs.NewListDirStream(entries), 0
 }
 
-func getAPIResourceStruct(name, contextName, namespace string, groupVersion *GroupedAPIResource,
+func getAPIResourceStruct(
+	name, contextName, namespace string,
+	groupVersion *GroupedAPIResource,
 	cli *k8s.Clientset,
-	stateStore *State, log *zap.SugaredLogger) fs.InodeEmbedder {
+	stateStore *State, log *zap.SugaredLogger,
+) fs.InodeEmbedder {
 	if groupVersion.GroupVersion() == "v1" && groupVersion.ResourceName == "pods" {
 
 		node := NewPodObjectsNode(name, namespace, contextName, cli, stateStore, log)
@@ -373,7 +386,7 @@ func getAPIResourceStruct(name, contextName, namespace string, groupVersion *Gro
 func (n *APIResourceNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	if name == "error" {
 		// TODO rc return a file whose string contents is the error
-		n.log.Error(zap.Error(n.lastError))
+		n.log.Error("error is", zap.Error(n.lastError))
 		return nil, syscall.ENOENT
 	}
 
