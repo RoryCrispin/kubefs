@@ -51,31 +51,14 @@ func NewPodObjectsNode(
 	}
 }
 
-func (n *PodObjectsNode) Path() uint64 {
-	return hash(fmt.Sprintf("%v/%v/pods/%v",
+func (n *PodObjectsNode) Path() string {
+	return fmt.Sprintf("%v/%v/pods/%v",
 		n.contextName, n.namespace, n.name,
-	))
+	)
 }
 
 func (n *PodObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	entries := []fuse.DirEntry{
-		{
-			Name: "containers",
-			Ino: hash(fmt.Sprintf("%v/containers", n.Path())),
-			Mode: fuse.S_IFDIR,
-		},
-		{
-			Name: "def.json",
-			Ino: hash(fmt.Sprintf("%v/def.json", n.Path())),
-			Mode: fuse.S_IFREG,
-		},
-		{
-			Name: "def.yaml",
-			Ino: hash(fmt.Sprintf("%v/def.yaml", n.Path())),
-			Mode: fuse.S_IFREG,
-		},
-	}
-	return fs.NewListDirStream(entries), 0
+	return readdirSubdirResponse([]string{"containers", "def.json", "def.yaml"}, n.Path())
 }
 
 func (n *PodObjectsNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {

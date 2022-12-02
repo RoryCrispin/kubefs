@@ -89,20 +89,7 @@ func (n *ListGenericNamespaceNode) Readdir(ctx context.Context) (fs.DirStream, s
 		n.lastError = err
 		return readDirErrResponse(n.Path())
 	}
-
-	entries := make([]fuse.DirEntry, 0, len(results))
-	for _, p := range results {
-		if p == "" {
-			continue
-		}
-		entries = append(entries, fuse.DirEntry{
-			Name: p,
-			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), p)),
-			Mode: fuse.S_IFDIR,
-		})
-	}
-	return fs.NewListDirStream(entries), 0
-
+	return readdirSubdirResponse(results, n.Path())
 }
 
 func (n *ListGenericNamespaceNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {

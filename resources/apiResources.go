@@ -45,19 +45,7 @@ func (n *ResourceTypeNode) Path() string {
 }
 
 func (n *ResourceTypeNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	entries := []fuse.DirEntry{
-		{
-			Name: "namespaced",
-			Ino:  hash(fmt.Sprintf("%v/namespaces", n.Path())),
-			Mode: fuse.S_IFDIR,
-		},
-		{
-			Name: "cluster",
-			Ino:  hash(fmt.Sprintf("%v/resources", n.Path())),
-			Mode: fuse.S_IFDIR,
-		},
-	}
-	return fs.NewListDirStream(entries), 0
+	return readdirSubdirResponse([]string{"namespaced", "cluster"}, n.Path())
 }
 
 func (n *ResourceTypeNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
@@ -148,6 +136,7 @@ func (g *GroupedAPIResource) GVR() *schema.GroupVersionResource {
 }
 
 func ensureAPIResources(log *zap.SugaredLogger, stateStore *State, contextName string) (APIResources, error) {
+	// TODO this should really be in the kube package
 	stateKey := fmt.Sprintf("%v/api-resources", contextName)
 	rv := make(APIResources)
 	elem, exist := stateStore.Get(stateKey)
@@ -205,18 +194,14 @@ func (n *RootResourcesNode) Readdir(ctx context.Context) (fs.DirStream, syscall.
 		n.lastError = fmt.Errorf("error while getting API resources | %w", err)
 		return readDirErrResponse(n.Path())
 	}
-	entries := make([]fuse.DirEntry, 0, len(resources))
+	returnedResources := []string{}
 	for _, res := range resources {
 		if res.Namespaced != n.namespaced {
 			continue
 		}
-		entries = append(entries, fuse.DirEntry{
-			Name: res.CLIName(),
-			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), res.ResourceName)),
-			Mode: syscall.S_IFREG,
-		})
+		returnedResources = append(returnedResources, res.ResourceName)
 	}
-	return fs.NewListDirStream(entries), 0
+	return readdirSubdirResponse(returnedResources, n.Path())
 }
 
 func (n *RootResourcesNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
@@ -340,24 +325,10 @@ func (n *APIResourceNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Er
 	}
 	results, err := kube.ListResourceNames(ctx, n.groupVersion.GroupVersion(), n.groupVersion.ResourceName, n.contextName, n.namespace)
 	if err != nil {
-		// The filesystem is our interface with the user, so let
-		// errors here be exposed via said interface.
 		n.lastError = err
 		return readDirErrResponse(n.Path())
 	}
-
-	entries := make([]fuse.DirEntry, 0, len(results))
-	for _, p := range results {
-		if p == "" {
-			continue
-		}
-		entries = append(entries, fuse.DirEntry{
-			Name: p,
-			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), p)),
-			Mode: fuse.S_IFDIR,
-		})
-	}
-	return fs.NewListDirStream(entries), 0
+	return readdirSubdirResponse(results, n.Path())
 }
 
 func getAPIResourceStruct(
@@ -457,19 +428,7 @@ func (n *APIResourceActions) Path() string {
 }
 
 func (n *APIResourceActions) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	entries := []fuse.DirEntry{
-		{
-			Name: "def.json",
-			Ino:  hash(fmt.Sprintf("%v/json", n.Path())),
-			Mode: fuse.S_IFDIR,
-		},
-		{
-			Name: "edit.json",
-			Ino:  hash(fmt.Sprintf("%v/json", n.Path())),
-			Mode: fuse.S_IFDIR,
-		},
-	}
-	return fs.NewListDirStream(entries), 0
+	return readdirSubdirResponse([]string{"def.json","edit.json"}, n.Path())
 }
 
 func (n *APIResourceActions) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {

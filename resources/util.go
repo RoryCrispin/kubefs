@@ -31,3 +31,34 @@ func readDirErrResponse(path string) (fs.DirStream, syscall.Errno) {
 		}
 		return fs.NewListDirStream(entries), 0
 }
+
+
+func readdirRegularFilesResponse(files []string, basePath string) (fs.DirStream, syscall.Errno) {
+	entries := make([]fuse.DirEntry, 0, len(files))
+	for _, p := range files {
+		if p == "" {
+			continue
+		}
+		entries = append(entries, fuse.DirEntry{
+			Name: p,
+			Ino:  hash(fmt.Sprintf("%v/%v", basePath, p)),
+			Mode: fuse.S_IFREG,
+		})
+	}
+	return fs.NewListDirStream(entries), 0
+}
+
+func readdirSubdirResponse(files []string, basePath string) (fs.DirStream, syscall.Errno) {
+	entries := make([]fuse.DirEntry, 0, len(files))
+	for _, p := range files {
+		if p == "" {
+			continue
+		}
+		entries = append(entries, fuse.DirEntry{
+			Name: p,
+			Ino:  hash(fmt.Sprintf("%v/%v", basePath, p)),
+			Mode: fuse.S_IFREG,
+		})
+	}
+	return fs.NewListDirStream(entries), 0
+}

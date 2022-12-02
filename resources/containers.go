@@ -61,25 +61,12 @@ func (n *RootContainerNode) Path() string {
 	)
 }
 
-
 func (n *RootContainerNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	results, err := kube.GetContainers(ctx, n.cli, n.pod, n.namespace)
 	if err != nil {
 		panic(err)
 	}
-
-	entries := make([]fuse.DirEntry, 0, len(results))
-	for _, p := range results {
-		if p == "" {
-			continue
-		}
-		entries = append(entries, fuse.DirEntry{
-			Name: p,
-			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), p)),
-			Mode: fuse.S_IFREG,
-		})
-	}
-	return fs.NewListDirStream(entries), 0
+	return readdirRegularFilesResponse(results, n.Path())
 }
 
 func (n *RootContainerNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
@@ -150,26 +137,8 @@ func (n *RootContainerObjectsNode) Path() string {
 	)
 }
 
-var _ = (fs.NodeReaddirer)((*RootContainerObjectsNode)(nil))
 func (n *RootContainerObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	entries := []fuse.DirEntry{
-		{
-			Name: "logs",
-			Ino: hash(fmt.Sprintf("%v/logs", n.Path())),
-			Mode: fuse.S_IFREG,
-		},
-		{
-			Name: "logs-previous",
-			Ino: hash(fmt.Sprintf("%v/logs-previous", n.Path())),
-			Mode: fuse.S_IFDIR,
-		},
-		{
-			Name: "exec",
-			Ino: hash(fmt.Sprintf("%v/exec", n.Path())),
-			Mode: fuse.S_IFDIR,
-		},
-	}
-	return fs.NewListDirStream(entries), 0
+	return readdirSubdirResponse([]string{"logs", "logs-previous", "exec"}, n.Path())
 }
 
 func (n *RootContainerObjectsNode) mkContainerExecFile(ctx context.Context) *fs.Inode {

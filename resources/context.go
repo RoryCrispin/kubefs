@@ -20,6 +20,7 @@ type RootContextNode struct {
 
 	stateStore *State
 	log *zap.SugaredLogger
+	lastError error
 }
 
 func (n *RootContextNode) Path() string {
@@ -38,21 +39,10 @@ func NewRootContextNode(log *zap.SugaredLogger) *RootContextNode {
 func (n *RootContextNode) Readdir(_ context.Context) (fs.DirStream, syscall.Errno) {
 	results, err := kube.GetK8sContexts()
 	if err != nil {
-		panic(err)
+		n.lastError = err
+		return readDirErrResponse(n.Path())
 	}
-
-	entries := make([]fuse.DirEntry, 0, len(results))
-	for _, p := range results {
-		if p == "" {
-			continue
-		}
-		entries = append(entries, fuse.DirEntry{
-			Name: p,
-			Ino: hash(p),
-			Mode: fuse.S_IFDIR,
-		})
-	}
-	return fs.NewListDirStream(entries), 0
+	return readdirSubdirResponse(results, n.Path())
 }
 
 func (n *RootContextNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
@@ -101,19 +91,7 @@ func (n *RootContextObjectsNode) Path() string {
 }
 
 func (n *RootContextObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	entries := []fuse.DirEntry{
-		{
-			Name: "resources",
-			Ino: hash(fmt.Sprintf("%v/resources", n.Path())),
-			Mode: fuse.S_IFDIR,
-		},
-		{
-			Name: "config",
-			Ino: hash(fmt.Sprintf("%v/config", n.Path())),
-			Mode: fuse.S_IFDIR,
-		},
-	}
-	return fs.NewListDirStream(entries), 0
+	return readdirSubdirResponse([]string{"resources", "config"}, n.Path())
 }
 
 func (n *RootContextObjectsNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
