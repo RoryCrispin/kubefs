@@ -487,10 +487,15 @@ func (n *APIResourceActions) Lookup(ctx context.Context, name string, out *fuse.
 		)
 		return ch, 0
 	} else if name == "edit.json" {
-		node := NewGenericJSONFile(n.name, n.namespace, n.contextName, n.groupVersion, n.cli, n.stateStore, n.log)
-		if node == nil {
-			panic("TODO")
-		}
+		node := NewGenericEditableJSONFile(
+			n.name,
+			n.namespace,
+			n.contextName,
+			n.groupVersion,
+			n.cli,
+			n.stateStore,
+			n.log,
+		)
 		ch := n.NewInode(
 			ctx, node,
 			fs.StableAttr{

@@ -137,6 +137,7 @@ func (n *RootContextObjectsNode) Lookup(ctx context.Context, name string, out *f
 		return ch, 0
 	} else if name == "config" {
 		n.log.Info("config is not yet supported", zap.String("contextName", n.name))
+		return nil, syscall.ENOENT
 	}
 	n.log.Error("lookup of unrecognised object type",
 		zap.String("type", name),
