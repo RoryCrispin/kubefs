@@ -42,7 +42,7 @@ func (n *RootContextNode) Readdir(_ context.Context) (fs.DirStream, syscall.Errn
 		n.lastError = err
 		return readDirErrResponse(n.Path())
 	}
-	return readdirSubdirResponse(results, n.Path())
+	return readdirResponse(&dirEntries{Directories: results}, n.Path())
 }
 
 func (n *RootContextNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
@@ -91,7 +91,7 @@ func (n *RootContextObjectsNode) Path() string {
 }
 
 func (n *RootContextObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	return readdirSubdirResponse([]string{"resources", "config"}, n.Path())
+	return readdirResponse(&dirEntries{Directories: []string{"resources", "config"}}, n.Path())
 }
 
 func (n *RootContextObjectsNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {

@@ -21,95 +21,57 @@ import (
 // exec
 type PodObjectsNode struct {
 	fs.Inode
-
-	namespace string
-	name string
-	contextName string
-
-	cli *k8s.Clientset
-	stateStore *State
-	log *zap.SugaredLogger
 }
 
 func NewPodObjectsNode(
-	name, namespace, contextName string,
-	cli *k8s.Clientset,
-	stateStore *State,
-	log *zap.SugaredLogger,
-) *PodObjectsNode {
-	if cli == nil || stateStore == nil || log == nil {
-		return nil
+	params genericDirParams,
+) fs.InodeEmbedder {
+	err := checkParams(paramsSpec{
+		pod: true,
+		namespace: true,
+		contextName: true,
+		cli: true,
+		stateStore: true,
+		log: true,
+	}, params)
+	if err != nil {
+		// TODO rc dont panic
+		panic(err)
 	}
-	return &PodObjectsNode{
-		namespace: namespace,
-		name: name,
-		contextName: contextName,
 
-		cli: cli,
-		stateStore: stateStore,
-		log: log,
-	}
-}
-
-func (n *PodObjectsNode) Path() string {
-	return fmt.Sprintf("%v/%v/pods/%v",
-		n.contextName, n.namespace, n.name,
+	basePath := fmt.Sprintf("%v/%v/pods/%v",
+		params.contextName, params.namespace, params.name,
 	)
+
+	n := GenericDir{
+		action: &PodObjectsNode{},
+
+		basePath: basePath,
+		params: params,
+	}
+	return &n
 }
 
-func (n *PodObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	return readdirSubdirResponse([]string{"containers", "def.json", "def.yaml"}, n.Path())
+func (n *PodObjectsNode) Entries(_ context.Context, _ *genericDirParams) (*dirEntries, error) {
+	return &dirEntries{
+		Files: []string{"def.json", "def.yaml"},
+		Directories: []string{"containers"},
+	}, nil
 }
 
-func (n *PodObjectsNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	if name == "def.json" {
-		node, err := NewPodJSONFile(n.name, n.namespace, n.contextName, n.cli, n.stateStore, n.log)
-		if node == nil {
-			panic("TODO")
-		}
-		if err != nil {
-			n.log.Error("error while constructing PodJSONFile",
-			zap.Error(err))
-			return nil, syscall.ENOENT
-		}
-		ch := n.NewInode(
-			ctx,
-			node,
-			fs.StableAttr{
-				Mode: syscall.S_IFREG,
-				Ino: hash(fmt.Sprintf("%v/json", n.Path())),
-			},
-		)
-		return ch, 0
-	} else if name == "containers" {
-		node, err := NewRootContainerNode(
-			n.name, n.namespace,
-			n.contextName, n.cli,
-			n.stateStore,
-			n.log,
-		)
-		if node == nil {
-			panic("TODO")
-		}
-		if err != nil {
-			n.log.Error("error while constructing RootContainerNode",
-			zap.Error(err))
-			return nil, syscall.ENOENT
-		}
-		ch := n.NewInode(
-			ctx,
-			node,
-			fs.StableAttr{
-				Mode: syscall.S_IFDIR,
-				Ino: hash(fmt.Sprintf("%v/containers", n.Path())),
-			},
-		)
-		return ch, 0
-	} else {
-		return nil, syscall.ENOENT
+func (n *PodObjectsNode) Entry(name string) (NewNode, FileMode, error) {
+	switch name {
+	case "def.json":
+		return NewPodJSONFile, syscall.S_IFREG, nil
+	case "def.yaml":
+		// TODO add yaml support
+		return NewPodJSONFile, syscall.S_IFREG, nil
+	case "containers":
+		return NewRootContainerNode, syscall.S_IFDIR, nil
+	default:
+		return nil, 0, fmt.Errorf("%v not found | %w", name, eNoExists)
 	}
 }
-
 
 // ========== Pod JSON file ==========
 
@@ -125,28 +87,30 @@ type PodJSONFile struct {
 }
 
 func NewPodJSONFile(
-	name, namespace, contextName string,
-	cli *k8s.Clientset,
-	stateStore *State,
-	log *zap.SugaredLogger,
-) (*PodJSONFile, error) {
-	if cli == nil {
-		var err error
-		cli, err = kube.GetK8sClient(contextName)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if stateStore == nil {
-		return nil, nil
-	}
+	params genericDirParams,
+) (fs.InodeEmbedder, error) {
+// -	pod, err := getArg("pod", params)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	namespace, err := getArg("namespace", params)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+// 	contextName, err := getArg("contextName", params)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+
+	ensureClientSet(&params)
+
 	return &PodJSONFile{
-		name: name,
-		namespace: namespace,
-		contextName: contextName,
-		cli: cli,
-		stateStore: stateStore,
-		log:log,
+		name: params.pod,
+		namespace: params.namespace,
+		contextName: params.contextName,
+		cli: params.cli,
+		stateStore: params.stateStore,
+		log: params.log,
 	}, nil
 }
 

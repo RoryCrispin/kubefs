@@ -11,8 +11,8 @@ import (
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
 	"go.uber.org/zap"
-
 	k8s "k8s.io/client-go/kubernetes"
+
 	kube "rorycrispin.co.uk/kubefs/kubernetes"
 )
 
@@ -29,29 +29,28 @@ type RootContainerNode struct {
 }
 
 func NewRootContainerNode(
-	pod       string,
-	namespace string,
-	contextName string,
-
-	cli *k8s.Clientset,
-	stateStore *State,
-	log *zap.SugaredLogger,
-) (*RootContainerNode, error) {
-	if cli == nil {
-		var err error
-		cli, err = kube.GetK8sClient(contextName)
-		if err != nil {
-			return nil, err
-		}
+	params genericDirParams,
+) (fs.InodeEmbedder, error) {
+	err := checkParams(paramsSpec{
+		pod: true,
+		namespace: true,
+		contextName: true,
+	}, params)
+	if err != nil {
+		// TODO rc dont panic
+		panic(err)
 	}
-	return &RootContainerNode{
-		pod: pod,
-		namespace:namespace,
-		contextName: contextName,
 
-		cli: cli,
-		stateStore: stateStore,
-		log: log,
+	ensureClientSet(&params)
+
+	return &RootContainerNode{
+		pod: params.pod,
+		namespace: params.namespace,
+		contextName: params.contextName,
+
+		cli: params.cli,
+		stateStore: params.stateStore,
+		log: params.log,
 	}, nil
 }
 
@@ -64,9 +63,12 @@ func (n *RootContainerNode) Path() string {
 func (n *RootContainerNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
 	results, err := kube.GetContainers(ctx, n.cli, n.pod, n.namespace)
 	if err != nil {
+		n.log.Error(err, zap.String("pod", n.pod), zap.String("namespace", n.namespace))
 		panic(err)
 	}
-	return readdirRegularFilesResponse(results, n.Path())
+	return readdirResponse(&dirEntries{
+		Files: results,
+	}, n.Path())
 }
 
 func (n *RootContainerNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
@@ -138,7 +140,10 @@ func (n *RootContainerObjectsNode) Path() string {
 }
 
 func (n *RootContainerObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	return readdirSubdirResponse([]string{"logs", "logs-previous", "exec"}, n.Path())
+	return readdirResponse(
+		&dirEntries{
+			Directories: []string{"logs", "logs-previous", "exec"},
+		}, n.Path())
 }
 
 func (n *RootContainerObjectsNode) mkContainerExecFile(ctx context.Context) *fs.Inode {

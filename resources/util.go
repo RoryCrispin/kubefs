@@ -1,12 +1,21 @@
 package resources
 
 import (
+	"context"
+	"fmt"
 	"hash/fnv"
 	"syscall"
-	"fmt"
 
 	"github.com/hanwen/go-fuse/v2/fs"
 	"github.com/hanwen/go-fuse/v2/fuse"
+	"go.uber.org/zap"
+	k8s "k8s.io/client-go/kubernetes"
+
+	kube "rorycrispin.co.uk/kubefs/kubernetes"
+)
+
+var (
+	eNoExists = fmt.Errorf("does not exist")
 )
 
 // hash generates a uint64 hash from a given string.
@@ -32,33 +41,168 @@ func readDirErrResponse(path string) (fs.DirStream, syscall.Errno) {
 		return fs.NewListDirStream(entries), 0
 }
 
-
-func readdirRegularFilesResponse(files []string, basePath string) (fs.DirStream, syscall.Errno) {
-	entries := make([]fuse.DirEntry, 0, len(files))
-	for _, p := range files {
+func readdirResponse(e *dirEntries, basePath string) (fs.DirStream, syscall.Errno) {
+	if e == nil {
+		panic("TODO")
+	}
+	rv := []fuse.DirEntry{}
+	for _, p := range e.Files {
 		if p == "" {
 			continue
 		}
-		entries = append(entries, fuse.DirEntry{
+		rv = append(rv, fuse.DirEntry{
 			Name: p,
 			Ino:  hash(fmt.Sprintf("%v/%v", basePath, p)),
 			Mode: fuse.S_IFREG,
 		})
 	}
-	return fs.NewListDirStream(entries), 0
+	for _, p := range e.Directories {
+		if p == "" {
+			continue
+		}
+		rv = append(rv, fuse.DirEntry{
+			Name: p,
+			Ino:  hash(fmt.Sprintf("%v/%v", basePath, p)),
+			Mode: fuse.S_IFDIR,
+		})
+	}
+	return fs.NewListDirStream(rv), 0
 }
 
-func readdirSubdirResponse(files []string, basePath string) (fs.DirStream, syscall.Errno) {
-	entries := make([]fuse.DirEntry, 0, len(files))
-	for _, p := range files {
-		if p == "" {
-			continue
-		}
-		entries = append(entries, fuse.DirEntry{
-			Name: p,
-			Ino:  hash(fmt.Sprintf("%v/%v", basePath, p)),
-			Mode: fuse.S_IFREG,
-		})
+type dirEntries struct {
+	Directories []string
+	Files []string
+}
+
+type VirtualDirectory interface {
+	Entries(context.Context, *genericDirParams) (*dirEntries, error)
+	Entry(string) (NewNode, FileMode, error)
+}
+
+func getArg(name string, params map[string]string) (string, error) {
+	rv, exists := params[name]
+	if !exists {
+		return "", fmt.Errorf("arg '%v' is required", name)
 	}
-	return fs.NewListDirStream(entries), 0
+	return rv, nil
+}
+
+type NewNode func(genericDirParams) (fs.InodeEmbedder, error)
+
+type FileMode uint32
+
+type genericDirParams struct {
+	contextName string
+	groupVersion *GroupedAPIResource
+	name string
+	namespace string
+	pod string
+
+	cli *k8s.Clientset
+	stateStore *State
+	log *zap.SugaredLogger
+}
+
+type GenericDir struct {
+	fs.Inode
+	action VirtualDirectory
+
+	basePath string
+	params genericDirParams
+
+	lastError error
+}
+
+type paramsSpec struct {
+	contextName bool
+	groupVersion bool
+	name bool
+	namespace bool
+	pod bool
+
+	cli bool
+	stateStore bool
+	log bool
+}
+
+func checkParams (spec paramsSpec, params genericDirParams) error {
+	missingValues := []string{}
+
+	if spec.contextName && params.contextName == "" {
+		missingValues = append(missingValues, "contextName")
+	}
+	if spec.groupVersion && params.groupVersion == nil {
+		missingValues = append(missingValues, "groupVersion")
+	}
+	if spec.name && params.name == "" {
+		missingValues = append(missingValues, "name")
+	}
+	if spec.namespace && params.namespace == "" {
+		missingValues = append(missingValues, "namespace")
+	}
+	if spec.pod && params.pod == "" {
+		missingValues = append(missingValues, "pod")
+	}
+	if spec.cli && params.cli == nil {
+		missingValues = append(missingValues, "cli")
+	}
+	if spec.stateStore && params.stateStore == nil {
+		missingValues = append(missingValues, "stateStore")
+	}
+	if spec.log && params.log == nil {
+		missingValues = append(missingValues, "log")
+	}
+	if len(missingValues) == 0 {
+		return nil
+	} else {
+		return fmt.Errorf("params was missing required values %v", missingValues)
+	}
+}
+
+func (n *GenericDir) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
+	entries, err := n.action.Entries(ctx, &n.params)
+	if err != nil {
+		panic("TODO")
+	}
+	return readdirResponse(
+		entries,
+		n.basePath,
+	)
+}
+
+func (n *GenericDir) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+	// TODO this is where we should intercept the Error and return a file containing the last error!
+	entryConstructor, mode, err := n.action.Entry(name)
+	if err !=  nil {
+		n.lastError = err
+		n.params.log.Error(err)
+		panic("TODO")
+	}
+	node, err := entryConstructor(n.params)
+	if err !=  nil {
+		n.lastError = err
+		n.params.log.Error(err)
+		panic("TODO")
+	}
+	ch := n.NewInode(
+		ctx,
+		node,
+		fs.StableAttr{
+			Mode: uint32(mode),
+			Ino: hash(fmt.Sprintf("%v/%v", n.basePath, name)),
+		},
+	)
+	return ch, 0
+}
+
+func ensureClientSet(params *genericDirParams) error {
+	if params.cli != nil {
+		return nil
+	}
+	cli, err := kube.GetK8sClient(params.contextName)
+	if err != nil {
+		return err
+	}
+	params.cli = cli
+	return nil
 }

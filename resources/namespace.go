@@ -6,9 +6,6 @@ import (
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
-	"github.com/hanwen/go-fuse/v2/fuse"
-	"go.uber.org/zap"
-	k8s "k8s.io/client-go/kubernetes"
 
 	kube "rorycrispin.co.uk/kubefs/kubernetes"
 )
@@ -20,100 +17,46 @@ import (
 type ListGenericNamespaceNode struct {
 	// Must embed an Inode for the struct to work as a node.
 	fs.Inode
-
-	contextName  string
-	groupVersion *GroupedAPIResource
-
-	lastError error
-
-	cli        *k8s.Clientset
-	stateStore *State
-	log *zap.SugaredLogger
 }
 
 func NewListGenericNamespaceNode(
-	contextName string,
-	groupVersion *GroupedAPIResource,
+	name string,
+	params genericDirParams,
+) fs.InodeEmbedder {
+	ensureClientSet(&params)
+	err := checkParams(paramsSpec{
+		contextName: true,
+		groupVersion: true,
+		cli: true,
+		log: true,
+		stateStore: true,
 
-	cli *k8s.Clientset,
-	stateStore *State,
-	log *zap.SugaredLogger,
-) *ListGenericNamespaceNode {
-	if cli == nil {
-		var err error
-		cli, err = kube.GetK8sClient(contextName)
-		if err != nil {
-			panic("TODO")
-		}
-	}
-	if stateStore == nil || log == nil {
-		return nil
-	}
-	return &ListGenericNamespaceNode{
-		contextName: contextName,
-		groupVersion: groupVersion,
-
-		cli: cli,
-		stateStore: stateStore,
-		log: log,
-	}
-}
-
-func (n *ListGenericNamespaceNode) Path() string {
-	return fmt.Sprintf("%v/resources/%v/%v/namespaces",
-		n.contextName, n.groupVersion.GroupVersion, n.groupVersion.ResourceName,
-	)
-}
-
-func (n *ListGenericNamespaceNode) ensureClientSet() error {
-	if n.cli != nil {
-		return nil
-	}
-	cli, err := kube.GetK8sClient(n.contextName)
+	}, params)
 	if err != nil {
-		return err
-	}
-	n.cli = cli
-	return nil
-}
-
-// // Readdir is part of the NodeReaddirer interface
-func (n *ListGenericNamespaceNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	err := n.ensureClientSet()
-	if err != nil {
+		// TODO rc dont panic
 		panic(err)
 	}
+	basePath := fmt.Sprintf("%v/resources/%v/%v/namespaces",
+		params.contextName, params.groupVersion.GroupVersion(), params.groupVersion.ResourceName,
+	)
 
-	results, err := kube.GetNamespaces(ctx, n.cli)
-	if err != nil {
-		n.lastError = err
-		return readDirErrResponse(n.Path())
+	return &GenericDir{
+		action: &ListGenericNamespaceNode{},
+		basePath: basePath,
+		params: params,
 	}
-	return readdirSubdirResponse(results, n.Path())
 }
 
-func (n *ListGenericNamespaceNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	if name == "error" {
-		// TODO rc return a file whose string contents is the error
-		return nil, syscall.ENOENT
-	}
-
-	node, err := NewAPIResourceNode(n.contextName, name, n.groupVersion, n.stateStore, n.log)
-	if node == nil {
-		panic("TODO")
-	}
+func (n *ListGenericNamespaceNode) Entries(ctx context.Context, params *genericDirParams) (*dirEntries, error) {
+	results, err := kube.GetNamespaces(ctx, params.cli)
 	if err != nil {
-		// TODO
-		return nil, syscall.ENOENT
+		return nil, err
 	}
+	return &dirEntries{
+		Directories: results,
+	}, nil
+}
 
-	ch := n.NewInode(
-		ctx,
-		node,
-		fs.StableAttr{
-			Mode: syscall.S_IFDIR,
-			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
-		},
-	)
-	return ch, 0
+func (n *ListGenericNamespaceNode) Entry(name string) (NewNode, FileMode, error) {
+	return NewAPIResourceNode, syscall.S_IFDIR, nil
 }

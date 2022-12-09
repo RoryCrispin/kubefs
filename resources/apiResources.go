@@ -45,7 +45,11 @@ func (n *ResourceTypeNode) Path() string {
 }
 
 func (n *ResourceTypeNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	return readdirSubdirResponse([]string{"namespaced", "cluster"}, n.Path())
+	return readdirResponse(
+		&dirEntries{
+			Directories: []string{"namespaced", "cluster"},
+		}, n.Path(),
+	)
 }
 
 func (n *ResourceTypeNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
@@ -201,7 +205,7 @@ func (n *RootResourcesNode) Readdir(ctx context.Context) (fs.DirStream, syscall.
 		}
 		returnedResources = append(returnedResources, res.ResourceName)
 	}
-	return readdirSubdirResponse(returnedResources, n.Path())
+	return readdirResponse(&dirEntries{Directories: returnedResources}, n.Path())
 }
 
 func (n *RootResourcesNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
@@ -215,14 +219,22 @@ func (n *RootResourcesNode) Lookup(ctx context.Context, name string, out *fuse.E
 	if !exists {
 		return nil, syscall.ENOENT
 	}
-	if elem.Namespaced {
 
-		node := NewListGenericNamespaceNode(
-			n.contextName, elem, nil, n.stateStore, n.log)
+	params := genericDirParams{
+		name:         name,
+		groupVersion: elem,
+		contextName:  n.contextName,
+		cli:          nil,
+		stateStore:   n.stateStore,
+		log:          n.log,
+	}
+	if elem.Namespaced {
+		params.namespace = name
+		node := NewListGenericNamespaceNode(name, params)
+
 		if node == nil {
 			panic("TODO")
 		}
-
 		ch := n.NewInode(ctx, node, fs.StableAttr{
 			Mode: syscall.S_IFDIR,
 			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
@@ -230,7 +242,7 @@ func (n *RootResourcesNode) Lookup(ctx context.Context, name string, out *fuse.E
 		)
 		return ch, 0
 	} else {
-		node, err := NewAPIResourceNode(n.contextName, "", elem, n.stateStore, n.log)
+		node, err := NewAPIResourceNode(params)
 		if err != nil {
 			// TODO
 			return nil, syscall.ENOENT
@@ -269,28 +281,36 @@ type APIResourceNode struct {
 }
 
 func NewAPIResourceNode(
-	contextName string, namespace string,
-	groupVersion *GroupedAPIResource,
-	stateStore *State, log *zap.SugaredLogger,
-) (*APIResourceNode, error) {
-	if stateStore == nil || log == nil {
-		return nil, nil
-	}
-	var err error
-	cli, err := kube.GetK8sClient(contextName)
+	params genericDirParams,
+) (fs.InodeEmbedder, error) {
+	err := checkParams(paramsSpec{
+		contextName: true,
+		groupVersion: true,
+		stateStore: true,
+		log: true,
+	}, params)
 	if err != nil {
-		return nil, err
+		// TODO rc dont panic
+		panic(err)
 	}
+	if params.groupVersion.Namespaced && params.namespace == "" {
+		err := fmt.Errorf("resource was namespaced but namespace was not provided as a param")
+		panic(err)
+	} else if params.namespace != "" && !params.groupVersion.Namespaced {
+		err := fmt.Errorf("resource was not namespaced but namespace was provided")
+		panic(err)
+	}
+	ensureClientSet(&params)
 
 	return &APIResourceNode{
-		contextName: contextName,
+		contextName: params.contextName,
 
-		groupVersion: groupVersion,
-		namespace:    namespace,
+		groupVersion: params.groupVersion,
+		namespace:    params.namespace,
 
-		stateStore: stateStore,
-		log:        log,
-		cli: cli,
+		stateStore: params.stateStore,
+		log:        params.log,
+		cli: params.cli,
 	}, nil
 }
 
@@ -328,7 +348,12 @@ func (n *APIResourceNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Er
 		n.lastError = err
 		return readDirErrResponse(n.Path())
 	}
-	return readdirSubdirResponse(results, n.Path())
+	n.log.Info("list resource names",
+		zap.String("groupVersin", n.groupVersion.GroupVersion()),
+		zap.String("resourceName", n.groupVersion.ResourceName),
+		zap.String("context", n.contextName),
+	)
+	return readdirResponse(&dirEntries{Directories: results}, n.Path())
 }
 
 func getAPIResourceStruct(
@@ -338,8 +363,16 @@ func getAPIResourceStruct(
 	stateStore *State, log *zap.SugaredLogger,
 ) fs.InodeEmbedder {
 	if groupVersion.GroupVersion() == "v1" && groupVersion.ResourceName == "pods" {
-
-		node := NewPodObjectsNode(name, namespace, contextName, cli, stateStore, log)
+		params := genericDirParams{
+			name: name,
+			pod: name,
+			namespace: namespace,
+			contextName: contextName,
+			cli: cli,
+			stateStore: stateStore,
+			log: log,
+		}
+		node := NewPodObjectsNode(params)
 		if node == nil {
 			panic("TODO")
 		}
@@ -428,7 +461,9 @@ func (n *APIResourceActions) Path() string {
 }
 
 func (n *APIResourceActions) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	return readdirSubdirResponse([]string{"def.json","edit.json"}, n.Path())
+	return readdirResponse(
+		&dirEntries{Directories: []string{"def.json","edit.json"}},
+		n.Path())
 }
 
 func (n *APIResourceActions) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
