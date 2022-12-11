@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"go.uber.org/zap"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -17,7 +18,14 @@ type metadataOnlyObject struct {
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 }
 
-func ListResourceNames(ctx context.Context, groupVersion, resource, contextName, namespace string) ([]string, error) {
+func ListResourceNames(
+	ctx context.Context,
+	log *zap.SugaredLogger,
+	groupVersion,
+	resource,
+	contextName,
+	namespace string,
+) ([]string, error) {
 	config, err := GetK8sClientConfig(contextName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get k8s config | %w", err)

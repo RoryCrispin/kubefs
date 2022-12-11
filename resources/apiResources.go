@@ -141,6 +141,11 @@ func (g *GroupedAPIResource) GVR() *schema.GroupVersionResource {
 
 func ensureAPIResources(log *zap.SugaredLogger, stateStore *State, contextName string) (APIResources, error) {
 	// TODO this should really be in the kube package
+
+	if contextName == "" {
+		return nil, fmt.Errorf("context must be set")
+	}
+
 	stateKey := fmt.Sprintf("%v/api-resources", contextName)
 	rv := make(APIResources)
 	elem, exist := stateStore.Get(stateKey)
@@ -152,7 +157,9 @@ func ensureAPIResources(log *zap.SugaredLogger, stateStore *State, contextName s
 		}
 	} else {
 		cli, err := kube.GetK8sDiscoveryClient(contextName)
-
+		if err != nil {
+			return nil, fmt.Errorf("err getting resources | %w", err)
+		}
 		resp, err := kube.GetApiResources(log, cli)
 		if err != nil {
 			return nil, fmt.Errorf("err getting resources | %w", err)
@@ -229,8 +236,7 @@ func (n *RootResourcesNode) Lookup(ctx context.Context, name string, out *fuse.E
 		log:          n.log,
 	}
 	if elem.Namespaced {
-		params.namespace = name
-		node := NewListGenericNamespaceNode(name, params)
+		node := NewListNamespaces(params)
 
 		if node == nil {
 			panic("TODO")
@@ -293,20 +299,18 @@ func NewAPIResourceNode(
 		// TODO rc dont panic
 		panic(err)
 	}
-	if params.groupVersion.Namespaced && params.namespace == "" {
-		err := fmt.Errorf("resource was namespaced but namespace was not provided as a param")
-		panic(err)
-	} else if params.namespace != "" && !params.groupVersion.Namespaced {
-		err := fmt.Errorf("resource was not namespaced but namespace was provided")
-		panic(err)
+	var namespace string
+	if params.groupVersion.Namespaced {
+		namespace = params.name
 	}
+
 	ensureClientSet(&params)
 
 	return &APIResourceNode{
 		contextName: params.contextName,
 
+		namespace: namespace,
 		groupVersion: params.groupVersion,
-		namespace:    params.namespace,
 
 		stateStore: params.stateStore,
 		log:        params.log,
@@ -343,16 +347,19 @@ func (n *APIResourceNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Er
 	if err != nil {
 		panic(err)
 	}
-	results, err := kube.ListResourceNames(ctx, n.groupVersion.GroupVersion(), n.groupVersion.ResourceName, n.contextName, n.namespace)
+	results, err := kube.ListResourceNames(
+		ctx,
+		n.log,
+		n.groupVersion.GroupVersion(),
+		n.groupVersion.ResourceName,
+		n.contextName,
+		n.namespace,
+	)
 	if err != nil {
 		n.lastError = err
 		return readDirErrResponse(n.Path())
 	}
-	n.log.Info("list resource names",
-		zap.String("groupVersin", n.groupVersion.GroupVersion()),
-		zap.String("resourceName", n.groupVersion.ResourceName),
-		zap.String("context", n.contextName),
-	)
+
 	return readdirResponse(&dirEntries{Directories: results}, n.Path())
 }
 

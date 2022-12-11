@@ -178,6 +178,7 @@ func (n *GenericDir) Lookup(ctx context.Context, name string, out *fuse.EntryOut
 		n.params.log.Error(err)
 		panic("TODO")
 	}
+	n.params.name = name
 	node, err := entryConstructor(n.params)
 	if err !=  nil {
 		n.lastError = err

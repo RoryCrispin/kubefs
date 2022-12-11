@@ -10,17 +10,16 @@ import (
 	kube "rorycrispin.co.uk/kubefs/kubernetes"
 )
 
-// ListGenericNamespaceNode returns a list of namespaces. lookup of the
+// ListNamespaces returns a list of namespaces. lookup of the
 // namespace will reveal the list of Namespaced API resources. Hence, it's
 // different from the other, deprecated, namespace list node which reveals
 // well-known resources only.
-type ListGenericNamespaceNode struct {
+type ListNamespaces struct {
 	// Must embed an Inode for the struct to work as a node.
 	fs.Inode
 }
 
-func NewListGenericNamespaceNode(
-	name string,
+func NewListNamespaces(
 	params genericDirParams,
 ) fs.InodeEmbedder {
 	ensureClientSet(&params)
@@ -30,7 +29,6 @@ func NewListGenericNamespaceNode(
 		cli: true,
 		log: true,
 		stateStore: true,
-
 	}, params)
 	if err != nil {
 		// TODO rc dont panic
@@ -41,13 +39,13 @@ func NewListGenericNamespaceNode(
 	)
 
 	return &GenericDir{
-		action: &ListGenericNamespaceNode{},
+		action: &ListNamespaces{},
 		basePath: basePath,
 		params: params,
 	}
 }
 
-func (n *ListGenericNamespaceNode) Entries(ctx context.Context, params *genericDirParams) (*dirEntries, error) {
+func (n *ListNamespaces) Entries(ctx context.Context, params *genericDirParams) (*dirEntries, error) {
 	results, err := kube.GetNamespaces(ctx, params.cli)
 	if err != nil {
 		return nil, err
@@ -57,6 +55,6 @@ func (n *ListGenericNamespaceNode) Entries(ctx context.Context, params *genericD
 	}, nil
 }
 
-func (n *ListGenericNamespaceNode) Entry(name string) (NewNode, FileMode, error) {
+func (n *ListNamespaces) Entry(name string) (NewNode, FileMode, error) {
 	return NewAPIResourceNode, syscall.S_IFDIR, nil
 }
