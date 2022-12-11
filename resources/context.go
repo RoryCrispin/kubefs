@@ -15,55 +15,41 @@ import (
 // RootContextNode represents a root dir which will list all Contexts which are
 // discoverable.
 type RootContextNode struct {
-	// Must embed an Inode for the struct to work as a node.
 	fs.Inode
-
-	stateStore *State
-	log *zap.SugaredLogger
-	lastError error
 }
 
 func (n *RootContextNode) Path() string {
 	return ""
 }
 
-func NewRootContextNode(log *zap.SugaredLogger) *RootContextNode {
-	log.Debug("Creating new statestore")
-	s := NewState()
-	return &RootContextNode{
-		stateStore: s,
-		log: log,
+func NewRootContextNode(params genericDirParams) (fs.InodeEmbedder, error) {
+	err := checkParams(paramsSpec{
+		log: true,
+	}, params)
+	if err != nil {
+		panic(err)
 	}
+
+	params.stateStore = NewState()
+
+	return &GenericDir{
+		action: &RootContextNode{},
+		params: params,
+		basePath: "",
+	}, nil
 }
 
-func (n *RootContextNode) Readdir(_ context.Context) (fs.DirStream, syscall.Errno) {
+func (n *RootContextNode) Entries(ctx context.Context, params *genericDirParams) (*dirEntries, error) {
 	results, err := kube.GetK8sContexts()
 	if err != nil {
-		n.lastError = err
-		return readDirErrResponse(n.Path())
+		return nil, err
 	}
-	return readdirResponse(&dirEntries{Directories: results}, n.Path())
+	return &dirEntries{
+		Directories: results,
+	}, nil
 }
-
-func (n *RootContextNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	node := NewRootContextObjectsNode(
-			name,
-
-			n.stateStore,
-			n.log,
-		)
-	if node == nil {
-		panic("TODO")
-	}
-	ch := n.NewInode(
-		ctx,
-		node,
-		fs.StableAttr{
-			Mode: syscall.S_IFDIR,
-			Ino: hash(name),
-		},
-	)
-	return ch, 0
+func (n *RootContextNode) Entry(name string) (NewNode, FileMode, error) {
+	return NewRootContextObjectsNode, syscall.S_IFDIR, nil
 }
 
 
@@ -75,51 +61,32 @@ type RootContextObjectsNode struct {
 	log *zap.SugaredLogger
 }
 
-func NewRootContextObjectsNode(name string, stateStore *State, log *zap.SugaredLogger) *RootContextObjectsNode{
-	if stateStore == nil || log == nil {
-		return nil
+func NewRootContextObjectsNode(params genericDirParams) (fs.InodeEmbedder, error) {
+	err := checkParams(paramsSpec{
+		log: true,
+	stateStore: true,
+	}, params)
+	if err != nil {
+		panic(err)
 	}
-	return &RootContextObjectsNode{
-		name: name,
-		stateStore: stateStore,
-		log: log,
+	params.contextName = params.name
+	return &GenericDir{
+		action: &RootContextObjectsNode{},
+		basePath: params.contextName,
+		params: params,
 	}
 }
 
-func (n *RootContextObjectsNode) Path() string {
-	return n.name
+func (n *RootContextObjectsNode) Entries(ctx context.Context, params *genericDirParams) (*dirEntries, error) {
+	return &dirEntries{
+		Directories: []string{"resources"},
+	}, nil
 }
 
-func (n *RootContextObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	return readdirResponse(&dirEntries{Directories: []string{"resources", "config"}}, n.Path())
-}
-
-func (n *RootContextObjectsNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	if name == "resources" {
-		node := NewResourceTypeNode(
-				n.name,
-				n.stateStore,
-				n.log,
-			)
-		if node == nil {
-			panic("TODO")
-		}
-		ch := n.NewInode(
-			ctx,
-			node,
-			fs.StableAttr{
-				Mode: syscall.S_IFDIR,
-				Ino: hash(fmt.Sprintf("%v/resources", n.Path())),
-			},
-		)
-		return ch, 0
-	} else if name == "config" {
-		n.log.Info("config is not yet supported", zap.String("contextName", n.name))
-		return nil, syscall.ENOENT
+func (n *RootContextObjectsNode) Entry(name string) (NewNode, FileMode, error) {
+	if name != "resources" {
+		// TODO RC should have a shared constant
+		return nil, 0, eNoExists
 	}
-	n.log.Error("lookup of unrecognised object type",
-		zap.String("type", name),
-		zap.String("contextName", n.name))
-
-	return nil, syscall.ENOENT
+	return NewResourceTypeNode, syscall.S_IFDIR, nil
 }

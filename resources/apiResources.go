@@ -29,49 +29,40 @@ type ResourceTypeNode struct {
 	log        *zap.SugaredLogger
 }
 
-func NewResourceTypeNode(contextName string, stateStore *State, log *zap.SugaredLogger) *ResourceTypeNode {
-	if stateStore == nil || log == nil {
-		return nil
-	}
-	return &ResourceTypeNode{
-		contextName: contextName,
-		stateStore:  stateStore,
-		log:         log,
-	}
-}
-
-func (n *ResourceTypeNode) Path() string {
-	return fmt.Sprintf("%v/resources", n.contextName)
-}
-
-func (n *ResourceTypeNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	return readdirResponse(
-		&dirEntries{
-			Directories: []string{"namespaced", "cluster"},
-		}, n.Path(),
+func NewResourceTypeNode(params genericDirParams) (fs.InodeEmbedder, error) {
+	err := checkParams(paramsSpec{
+		stateStore: true,
+		log: true,
+	},
+		params,
 	)
+	if err != nil {
+		panic(err)
+	}
+	basePath := fmt.Sprintf("%v/resources", n.contextName)
+	return &GenericDir{
+		action: &ResourceTypeNode{},
+		basePath: basePath,
+		params: params,
+	}, nil
 }
 
-func (n *ResourceTypeNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+func (n *ResourceTypeNode) Entries(ctx context.Context, params *genericDirParams) (*dirEntries, error) {
+	return &dirEntries{
+	Directories: []string{"namespaced", "cluster"},
+	}, nil
+}
+
+func (n *ResourceTypeNode) Entry(name string) (NewNode, FileMode, error) {
 	if name != "namespaced" && name != "cluster" {
-		return nil, syscall.ENOENT
+		return nil, 0, fmt.Errorf("resource type %v not found | %w", name, eNoExists)
 	}
-
-	node := NewRootResourcesNode(n.contextName, name == "namespaced", n.stateStore, n.log)
-	if node == nil {
-		panic("TODO")
-	}
-
-	ch := n.NewInode(
-		ctx,
-		node,
-		fs.StableAttr{
-			Mode: syscall.S_IFDIR,
-			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
-		},
-	)
-	return ch, 0
+	return NewRootResourcesNode, syscall.S_IFDIR, nil
+	// we used to pass in namespaced (name == namespaced) - will have to infer this now.
+	// see line 86
+	// namespaced:  params.name == "namespaced",
 }
+
 
 // RootResourcesNode is a dir containing all of the api resources within a given
 // cluster. If the namespaced bool is true, then only namespaced api-resources
@@ -79,26 +70,23 @@ func (n *ResourceTypeNode) Lookup(ctx context.Context, name string, out *fuse.En
 type RootResourcesNode struct {
 	fs.Inode
 
-	contextName string
 	namespaced  bool
-
-	stateStore *State
-	lastError  error
-	log        *zap.SugaredLogger
 }
 
 func NewRootResourcesNode(
-	contextName string, namespaced bool,
-	stateStore *State, log *zap.SugaredLogger,
+	params genericDirParams,
 ) *RootResourcesNode {
-	if stateStore == nil || log == nil {
-		return nil
+	err := checkParams(paramsSpec{
+		stateStore: true,
+		log: true,
+	},
+		params,
+	)
+	if err != nil {
+		panic(err)
 	}
 	return &RootResourcesNode{
-		contextName: contextName,
-		namespaced:  namespaced,
-		stateStore:  stateStore,
-		log:         log,
+		namespaced:  params.name == "namespaced",
 	}
 }
 
