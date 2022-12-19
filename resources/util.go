@@ -76,7 +76,7 @@ type dirEntries struct {
 
 type VirtualDirectory interface {
 	Entries(context.Context, *genericDirParams) (*dirEntries, error)
-	Entry(string) (NewNode, FileMode, error)
+	Entry(string, *genericDirParams) (NewNode, FileMode, error)
 }
 
 func getArg(name string, params map[string]string) (string, error) {
@@ -97,6 +97,7 @@ type genericDirParams struct {
 	name string
 	namespace string
 	pod string
+	namespaced *bool
 
 	cli *k8s.Clientset
 	stateStore *State
@@ -118,6 +119,7 @@ type paramsSpec struct {
 	groupVersion bool
 	name bool
 	namespace bool
+	namespaced bool
 	pod bool
 
 	cli bool
@@ -152,6 +154,9 @@ func checkParams (spec paramsSpec, params genericDirParams) error {
 	if spec.log && params.log == nil {
 		missingValues = append(missingValues, "log")
 	}
+	if spec.namespaced && params.namespaced == nil {
+		missingValues = append(missingValues, "namespaced")
+	}
 	if len(missingValues) == 0 {
 		return nil
 	} else {
@@ -172,7 +177,7 @@ func (n *GenericDir) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) 
 
 func (n *GenericDir) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	// TODO this is where we should intercept the Error and return a file containing the last error!
-	entryConstructor, mode, err := n.action.Entry(name)
+	entryConstructor, mode, err := n.action.Entry(name, &n.params)
 	if err !=  nil {
 		n.lastError = err
 		n.params.log.Error(err)

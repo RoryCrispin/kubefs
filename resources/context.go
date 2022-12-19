@@ -2,11 +2,9 @@ package resources
 
 import (
 	"context"
-	"fmt"
 	"syscall"
 
 	"github.com/hanwen/go-fuse/v2/fs"
-	"github.com/hanwen/go-fuse/v2/fuse"
 	"go.uber.org/zap"
 
 	kube "rorycrispin.co.uk/kubefs/kubernetes"
@@ -22,21 +20,17 @@ func (n *RootContextNode) Path() string {
 	return ""
 }
 
-func NewRootContextNode(params genericDirParams) (fs.InodeEmbedder, error) {
-	err := checkParams(paramsSpec{
-		log: true,
-	}, params)
-	if err != nil {
-		panic(err)
+func NewRootContextNode(log *zap.SugaredLogger) fs.InodeEmbedder {
+	params := genericDirParams{
+		stateStore: NewState(),
+		log: log,
 	}
-
-	params.stateStore = NewState()
 
 	return &GenericDir{
 		action: &RootContextNode{},
 		params: params,
 		basePath: "",
-	}, nil
+	}
 }
 
 func (n *RootContextNode) Entries(ctx context.Context, params *genericDirParams) (*dirEntries, error) {
@@ -48,7 +42,7 @@ func (n *RootContextNode) Entries(ctx context.Context, params *genericDirParams)
 		Directories: results,
 	}, nil
 }
-func (n *RootContextNode) Entry(name string) (NewNode, FileMode, error) {
+func (n *RootContextNode) Entry(name string, _ *genericDirParams) (NewNode, FileMode, error) {
 	return NewRootContextObjectsNode, syscall.S_IFDIR, nil
 }
 
@@ -74,7 +68,7 @@ func NewRootContextObjectsNode(params genericDirParams) (fs.InodeEmbedder, error
 		action: &RootContextObjectsNode{},
 		basePath: params.contextName,
 		params: params,
-	}
+	}, nil
 }
 
 func (n *RootContextObjectsNode) Entries(ctx context.Context, params *genericDirParams) (*dirEntries, error) {
@@ -83,7 +77,7 @@ func (n *RootContextObjectsNode) Entries(ctx context.Context, params *genericDir
 	}, nil
 }
 
-func (n *RootContextObjectsNode) Entry(name string) (NewNode, FileMode, error) {
+func (n *RootContextObjectsNode) Entry(name string, _ *genericDirParams) (NewNode, FileMode, error) {
 	if name != "resources" {
 		// TODO RC should have a shared constant
 		return nil, 0, eNoExists

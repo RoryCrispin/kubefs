@@ -59,7 +59,7 @@ func (n *PodObjectsNode) Entries(_ context.Context, _ *genericDirParams) (*dirEn
 	}, nil
 }
 
-func (n *PodObjectsNode) Entry(name string) (NewNode, FileMode, error) {
+func (n *PodObjectsNode) Entry(name string, _ *genericDirParams) (NewNode, FileMode, error) {
 	switch name {
 	case "def.json":
 		return NewPodJSONFile, syscall.S_IFREG, nil

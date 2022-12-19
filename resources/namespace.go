@@ -19,9 +19,7 @@ type ListNamespaces struct {
 	fs.Inode
 }
 
-func NewListNamespaces(
-	params genericDirParams,
-) fs.InodeEmbedder {
+func NewListNamespaces(params genericDirParams) (fs.InodeEmbedder, error) {
 	ensureClientSet(&params)
 	err := checkParams(paramsSpec{
 		contextName: true,
@@ -42,7 +40,7 @@ func NewListNamespaces(
 		action: &ListNamespaces{},
 		basePath: basePath,
 		params: params,
-	}
+	}, nil
 }
 
 func (n *ListNamespaces) Entries(ctx context.Context, params *genericDirParams) (*dirEntries, error) {
@@ -55,6 +53,6 @@ func (n *ListNamespaces) Entries(ctx context.Context, params *genericDirParams) 
 	}, nil
 }
 
-func (n *ListNamespaces) Entry(name string) (NewNode, FileMode, error) {
+func (n *ListNamespaces) Entry(name string, _ *genericDirParams) (NewNode, FileMode, error) {
 	return NewAPIResourceNode, syscall.S_IFDIR, nil
 }

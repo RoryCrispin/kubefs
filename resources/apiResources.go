@@ -33,13 +33,14 @@ func NewResourceTypeNode(params genericDirParams) (fs.InodeEmbedder, error) {
 	err := checkParams(paramsSpec{
 		stateStore: true,
 		log: true,
+		contextName: true,
 	},
 		params,
 	)
 	if err != nil {
 		panic(err)
 	}
-	basePath := fmt.Sprintf("%v/resources", n.contextName)
+	basePath := fmt.Sprintf("%v/resources", params.contextName)
 	return &GenericDir{
 		action: &ResourceTypeNode{},
 		basePath: basePath,
@@ -53,14 +54,13 @@ func (n *ResourceTypeNode) Entries(ctx context.Context, params *genericDirParams
 	}, nil
 }
 
-func (n *ResourceTypeNode) Entry(name string) (NewNode, FileMode, error) {
+func (n *ResourceTypeNode) Entry(name string, params *genericDirParams) (NewNode, FileMode, error) {
 	if name != "namespaced" && name != "cluster" {
 		return nil, 0, fmt.Errorf("resource type %v not found | %w", name, eNoExists)
 	}
+	namespaced := name == "namespaced"
+	params.namespaced = &namespaced
 	return NewRootResourcesNode, syscall.S_IFDIR, nil
-	// we used to pass in namespaced (name == namespaced) - will have to infer this now.
-	// see line 86
-	// namespaced:  params.name == "namespaced",
 }
 
 
@@ -69,29 +69,63 @@ func (n *ResourceTypeNode) Entry(name string) (NewNode, FileMode, error) {
 // will be returned, and vice-versa.
 type RootResourcesNode struct {
 	fs.Inode
-
-	namespaced  bool
 }
 
-func NewRootResourcesNode(
-	params genericDirParams,
-) *RootResourcesNode {
+func NewRootResourcesNode(params genericDirParams) (fs.InodeEmbedder, error)  {
 	err := checkParams(paramsSpec{
 		stateStore: true,
 		log: true,
+		contextName: true,
+		namespaced: true,
 	},
 		params,
 	)
 	if err != nil {
 		panic(err)
 	}
-	return &RootResourcesNode{
-		namespaced:  params.name == "namespaced",
-	}
+	basePath := fmt.Sprintf("%v/resources", params.contextName)
+	return &GenericDir{
+		action: &RootResourcesNode{},
+		basePath: basePath,
+		params: params,
+	}, nil
 }
 
-func (n *RootResourcesNode) Path() string {
-	return fmt.Sprintf("%v/resources", n.contextName)
+func (n *RootResourcesNode) Entries(ctx context.Context, params *genericDirParams) (*dirEntries, error) {
+	resources, err := ensureAPIResources(params.log, params.stateStore, params.contextName)
+	if err != nil {
+		return nil, fmt.Errorf("failure getting api resources | %w", err)
+	}
+	returnedResources := []string{}
+	for _, res := range resources {
+		if res.Namespaced != *params.namespaced {
+			continue
+		}
+		returnedResources = append(returnedResources, res.ResourceName)
+	}
+	return &dirEntries{
+		Directories: returnedResources,
+	}, nil
+}
+
+
+func (n *RootResourcesNode) Entry(name string, params *genericDirParams) (NewNode, FileMode, error) {
+	// TODO RC should be passing the api resource groupVersion here..
+	resources, err := ensureAPIResources(params.log, params.stateStore, params.contextName)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failure getting api resources | %w", err)
+	}
+	elem, exists := resources[name]
+	if !exists {
+		fmt.Printf("all resources : %#v", resources)
+		return nil, 0, fmt.Errorf("failure looking up resource %v | %w", name, eNoExists)
+	}
+	params.groupVersion = elem
+	if params.namespaced != nil && *params.namespaced {
+		return NewListNamespaces, syscall.S_IFDIR, nil
+	} else {
+		return NewAPIResourceNode, syscall.S_IFDIR, nil
+	}
 }
 
 type APIResources map[string]*GroupedAPIResource
@@ -187,71 +221,6 @@ func ensureAPIResources(log *zap.SugaredLogger, stateStore *State, contextName s
 	return rv, nil
 }
 
-func (n *RootResourcesNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	resources, err := ensureAPIResources(n.log, n.stateStore, n.contextName)
-	if err != nil {
-		n.lastError = fmt.Errorf("error while getting API resources | %w", err)
-		return readDirErrResponse(n.Path())
-	}
-	returnedResources := []string{}
-	for _, res := range resources {
-		if res.Namespaced != n.namespaced {
-			continue
-		}
-		returnedResources = append(returnedResources, res.ResourceName)
-	}
-	return readdirResponse(&dirEntries{Directories: returnedResources}, n.Path())
-}
-
-func (n *RootResourcesNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	resources, err := ensureAPIResources(n.log, n.stateStore, n.contextName)
-	if err != nil {
-		n.log.Error("error while looking up resource",
-		zap.String("resource", name), zap.Error(err))
-		return nil, syscall.ENOENT
-	}
-	elem, exists := resources[name]
-	if !exists {
-		return nil, syscall.ENOENT
-	}
-
-	params := genericDirParams{
-		name:         name,
-		groupVersion: elem,
-		contextName:  n.contextName,
-		cli:          nil,
-		stateStore:   n.stateStore,
-		log:          n.log,
-	}
-	if elem.Namespaced {
-		node := NewListNamespaces(params)
-
-		if node == nil {
-			panic("TODO")
-		}
-		ch := n.NewInode(ctx, node, fs.StableAttr{
-			Mode: syscall.S_IFDIR,
-			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
-		},
-		)
-		return ch, 0
-	} else {
-		node, err := NewAPIResourceNode(params)
-		if err != nil {
-			// TODO
-			return nil, syscall.ENOENT
-		}
-		if node == nil {
-			panic("TODO")
-		}
-		ch := n.NewInode(ctx, node, fs.StableAttr{
-			Mode: syscall.S_IFDIR,
-			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
-		},
-		)
-		return ch, 0
-	}
-}
 
 // APIResourceNode is a dir containing the list of resources for an API
 // resource. It may be Namespaced or Clustered. If the resource is clustered,
