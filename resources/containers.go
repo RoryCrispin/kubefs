@@ -19,21 +19,21 @@ import (
 type RootContainerNode struct {
 	fs.Inode
 
-	pod       string
-	namespace string
+	pod         string
+	namespace   string
 	contextName string
 
-	cli *k8s.Clientset
+	cli        *k8s.Clientset
 	stateStore *State
-	log *zap.SugaredLogger
+	log        *zap.SugaredLogger
 }
 
 func NewRootContainerNode(
 	params genericDirParams,
 ) (fs.InodeEmbedder, error) {
 	err := checkParams(paramsSpec{
-		pod: true,
-		namespace: true,
+		pod:         true,
+		namespace:   true,
 		contextName: true,
 	}, params)
 	if err != nil {
@@ -44,13 +44,13 @@ func NewRootContainerNode(
 	ensureClientSet(&params)
 
 	return &RootContainerNode{
-		pod: params.pod,
-		namespace: params.namespace,
+		pod:         params.pod,
+		namespace:   params.namespace,
 		contextName: params.contextName,
 
-		cli: params.cli,
+		cli:        params.cli,
 		stateStore: params.stateStore,
-		log: params.log,
+		log:        params.log,
 	}, nil
 }
 
@@ -60,36 +60,18 @@ func (n *RootContainerNode) Path() string {
 	)
 }
 
-func (n *RootContainerNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
+func (n *RootContainerNode) Entries(ctx context.Context, params *genericDirParams) (*dirEntries, error) {
 	results, err := kube.GetContainers(ctx, n.cli, n.pod, n.namespace)
 	if err != nil {
-		n.log.Error(err, zap.String("pod", n.pod), zap.String("namespace", n.namespace))
-		panic(err)
+		return nil, err
 	}
-	return readdirResponse(&dirEntries{
-		Files: results,
-	}, n.Path())
+	return &dirEntries{
+		Directories: results,
+	}, nil
 }
 
-func (n *RootContainerNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	node := NewRootContainerObjectsNode(
-		n.namespace,
-		n.pod, name,
-		n.contextName,
-		n.cli, n.stateStore,
-		n.log)
-	if node == nil {
-		panic("TODO")
-	}
-	ch := n.NewInode(
-		ctx,
-		node,
-		fs.StableAttr{
-			Mode: syscall.S_IFDIR,
-			Ino: hash(fmt.Sprintf("%v/%v", n.Path(), name)),
-		},
-	)
-	return ch, 0
+func (n *RootContainerNode) Entry(name string, _ *genericDirParams) (NewNode, FileMode, error) {
+	return NewRootContainerObjectsNode, syscall.S_IFDIR, nil
 }
 
 // ========== RootContainerObjectsNode ======
@@ -97,56 +79,56 @@ func (n *RootContainerNode) Lookup(ctx context.Context, name string, out *fuse.E
 type RootContainerObjectsNode struct {
 	fs.Inode
 
-	namespace string
-	pod       string
-	name      string
+	namespace   string
+	pod         string
+	name        string
 	contextName string
 
-	cli *k8s.Clientset
+	cli        *k8s.Clientset
 	stateStore *State
-	log *zap.SugaredLogger
+	log        *zap.SugaredLogger
 }
 
 func NewRootContainerObjectsNode(
 	namespace string,
-	pod       string,
-	name      string,
+	pod string,
+	name string,
 	contextName string,
 
 	cli *k8s.Clientset,
 	stateStore *State,
 	log *zap.SugaredLogger,
-) *RootContainerObjectsNode {
-	if cli == nil || stateStore == nil || log == nil {
-		return nil
-	}
-	return &RootContainerObjectsNode{
-		namespace: namespace,
-		pod: pod,
-		name: name,
-		contextName: contextName,
-
-		cli: cli,
-		stateStore: stateStore,
-		log: log,
-	}
-}
-
-// Ensure we are implementing the NodeReaddirer interface
-func (n *RootContainerObjectsNode) Path() string {
-	return fmt.Sprintf("%v/%v/pods/%v/%v",
+	params genericDirParams,
+) (fs.InodeEmbedder, error) {
+	err := checkParams(paramsSpec{
+		cli:        true,
+		stateStore: true,
+		log:        true,
+	}, params)
+	basePath := fmt.Sprintf("%v/%v/pods/%v/%v",
 		n.contextName, n.namespace, n.pod, n.name,
 	)
+	return &GenericDir{
+		action:   &RootContainerNode{},
+		basePath: basePath,
+		params:   params,
+	}, nil
 }
 
-func (n *RootContainerObjectsNode) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) {
-	return readdirResponse(
-		&dirEntries{
-			Directories: []string{"logs", "logs-previous", "exec"},
-		}, n.Path())
+func (n *RootContainerObjectsNode) Entries(ctx context.Context, params *genericDirParams) (*dirEntries, error) {
+	return &dirEntries{
+		Directories: []string{"logs", "logs-previous", "exec"},
+	}, nil
 }
 
-func (n *RootContainerObjectsNode) mkContainerExecFile(ctx context.Context) *fs.Inode {
+func (n *RootcontainerObjectsNode) Entry(name string, _ *genericDirParams) (NewNode, FileMode, error) {
+	if name == "exec" {
+
+	}
+}
+
+// fetchContainerExecFile returns a new or existing container exec file from the stateStore.
+func (n *RootContainerObjectsNode) fetchContainerExecFile(ctx context.Context) *fs.Inode {
 	stateKey := fmt.Sprintf("%v/exec", n.Path())
 
 	var node *ContainerExecFile
@@ -158,9 +140,9 @@ func (n *RootContainerObjectsNode) mkContainerExecFile(ctx context.Context) *fs.
 		if !ok {
 			panic("failed type assertion")
 		}
-	} else  {
+	} else {
 		n.log.Debug("creating new container exec file",
-		zap.String("name", n.name),
+			zap.String("name", n.name),
 		)
 
 		node = NewContainerExecFile(
@@ -180,7 +162,7 @@ func (n *RootContainerObjectsNode) mkContainerExecFile(ctx context.Context) *fs.
 		ctx, node,
 		fs.StableAttr{
 			Mode: syscall.S_IFREG,
-			Ino: hash(stateKey),
+			Ino:  hash(stateKey),
 		},
 	)
 
@@ -189,12 +171,7 @@ func (n *RootContainerObjectsNode) mkContainerExecFile(ctx context.Context) *fs.
 func (n *RootContainerObjectsNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
 	var previous bool
 	if name == "exec" {
-		ch := n.mkContainerExecFile(ctx)
-		n.log.Debug("assign new inode",
-			zap.String("inode", ch.String()),
-			zap.String("name", n.name),
-			zap.String("pod", n.pod),
-		)
+		ch := n.fetchContainerExecFile(ctx)
 		return ch, 0
 	}
 	if name == "logs" {
@@ -214,7 +191,7 @@ func (n *RootContainerObjectsNode) Lookup(ctx context.Context, name string, out 
 		panic("TODO")
 	}
 	if err != nil {
-		n.log.Error("RootContainerObjects wrror while constructing RootContainerLogsFile",
+		n.log.Error("RootContainerObjects error while constructing RootContainerLogsFile",
 			zap.String("name", name), zap.Error(err),
 		)
 		return nil, syscall.ENOENT
@@ -224,7 +201,7 @@ func (n *RootContainerObjectsNode) Lookup(ctx context.Context, name string, out 
 		node,
 		fs.StableAttr{
 			Mode: syscall.S_IFREG,
-			Ino: hash(fmt.Sprintf("%v/%v", n.Path(), name)),
+			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
 		},
 	)
 	return ch, 0
@@ -234,20 +211,20 @@ func (n *RootContainerObjectsNode) Lookup(ctx context.Context, name string, out 
 
 type ContainerLogsFile struct {
 	fs.Inode
-	name      string
-	pod       string
-	namespace string
-	previous bool
+	name        string
+	pod         string
+	namespace   string
+	previous    bool
 	contextName string
 
-	cli *k8s.Clientset
+	cli        *k8s.Clientset
 	stateStore *State
-	log *zap.SugaredLogger
+	log        *zap.SugaredLogger
 }
 
 func NewContainerLogsFile(
-	name      string,
-	pod       string,
+	name string,
+	pod string,
 	namespace string,
 	previous bool,
 	contextName string,
@@ -267,15 +244,15 @@ func NewContainerLogsFile(
 		return nil, nil
 	}
 	return &ContainerLogsFile{
-		name: name,
-		pod: pod,
-		namespace: namespace,
-		previous: previous,
+		name:        name,
+		pod:         pod,
+		namespace:   namespace,
+		previous:    previous,
 		contextName: contextName,
 
-		cli: cli,
+		cli:        cli,
 		stateStore: stateStore,
-		log: log,
+		log:        log,
 	}, nil
 }
 
@@ -314,9 +291,9 @@ func (f *ContainerLogsFile) Open(ctx context.Context, openFlags uint32) (fh fs.F
 
 type ContainerExecFile struct {
 	fs.Inode
-	name      string
-	pod       string
-	namespace string
+	name        string
+	pod         string
+	namespace   string
 	contextName string
 
 	// When file systems are mutable, all access must use
@@ -324,33 +301,46 @@ type ContainerExecFile struct {
 	mu      sync.Mutex
 	content []byte
 
-	cli *k8s.Clientset
+	cli        *k8s.Clientset
 	stateStore *State
-	log *zap.SugaredLogger
+	log        *zap.SugaredLogger
 }
 
 func NewContainerExecFile(
-	name      string,
-	pod       string,
-	namespace string,
-	contextName string,
+	params genericDirParams,
+) (fs.InodeEmbedder, error) {
+	err := checkParams(paramsSpec{
+		cli:        true,
+		stateStore: true,
+	}, params)
+	if err != nil {
+		// TODO dont panic
+		panic(err)
+	}
+	// TODO rc: would it be useful to lift the cache fetch to a higher level?
+	stateKey := params.Identifier()
 
-	cli *k8s.Clientset,
-	stateStore *State,
-	log *zap.SugaredLogger,
-) *ContainerExecFile {
-	if cli == nil || stateStore == nil {
-		return nil
+	elem, exist := params.stateStore.Get(stateKey)
+	var node fs.InodeEmbedder
+
+	if exist {
+		var ok bool
+		node, ok = elem.(*ContainerExecFile)
+		if !ok {
+			panic("failed type assertion")
+		}
+	} else {
+		params.log.Debug("creating new container exec file",
+			zap.String("name", params.name),
+		)
+		node, err = NewContainerExecFile(params)
+		if err != nil {
+			// TODO rc: don't panic
+			panic(err)
+		}
 	}
-	return &ContainerExecFile{
-		name: name,
-		pod: pod,
-		namespace: namespace,
-		contextName: contextName,
-		cli: cli,
-		stateStore: stateStore,
-		log:log,
-	}
+	return node, nil
+
 }
 
 // Access reports whether a directory can be accessed by the caller.

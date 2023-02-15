@@ -98,13 +98,24 @@ type genericDirParams struct {
 	groupVersion *GroupedAPIResource
 	name         string
 	namespace    string
-	pod          string
 	namespaced   *bool
+	pod          string
 
 	cli        *k8s.Clientset
 	stateStore *State
 	log        *zap.SugaredLogger
 	lastError  error
+}
+
+// Identifier returns a stringified identifier for this set of params
+func (p *genericDirParams) Identifier() string {
+	return fmt.Sprintf("%v/%v/%v/%v/%v",
+		p.contextName,
+		p.groupVersion.GVR().String(),
+		p.namespace,
+		p.pod,
+		p.name,
+	)
 }
 
 type GenericDir struct {
