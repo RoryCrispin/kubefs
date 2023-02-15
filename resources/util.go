@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"syscall"
@@ -15,7 +16,8 @@ import (
 )
 
 var (
-	eNoExists = fmt.Errorf("does not exist")
+	eNoExists      = fmt.Errorf("does not exist")
+	eParamsMissing = fmt.Errorf("params missing")
 )
 
 // hash generates a uint64 hash from a given string.
@@ -31,14 +33,14 @@ func hash(s string) uint64 {
 // Calling functions should store the error and present it as plaintext when
 // the user looks up this Error file.
 func readDirErrResponse(path string) (fs.DirStream, syscall.Errno) {
-		entries := []fuse.DirEntry{
-			{
-				Name: "error",
-				Ino:  hash(fmt.Sprintf("%v/%v", path, "error")),
-				Mode: fuse.S_IFREG,
-			},
-		}
-		return fs.NewListDirStream(entries), 0
+	entries := []fuse.DirEntry{
+		{
+			Name: "error",
+			Ino:  hash(fmt.Sprintf("%v/%v", path, "error")),
+			Mode: fuse.S_IFREG,
+		},
+	}
+	return fs.NewListDirStream(entries), 0
 }
 
 func readdirResponse(e *dirEntries, basePath string) (fs.DirStream, syscall.Errno) {
@@ -71,7 +73,7 @@ func readdirResponse(e *dirEntries, basePath string) (fs.DirStream, syscall.Errn
 
 type dirEntries struct {
 	Directories []string
-	Files []string
+	Files       []string
 }
 
 type VirtualDirectory interface {
@@ -92,16 +94,17 @@ type NewNode func(genericDirParams) (fs.InodeEmbedder, error)
 type FileMode uint32
 
 type genericDirParams struct {
-	contextName string
+	contextName  string
 	groupVersion *GroupedAPIResource
-	name string
-	namespace string
-	pod string
-	namespaced *bool
+	name         string
+	namespace    string
+	pod          string
+	namespaced   *bool
 
-	cli *k8s.Clientset
+	cli        *k8s.Clientset
 	stateStore *State
-	log *zap.SugaredLogger
+	log        *zap.SugaredLogger
+	lastError  error
 }
 
 type GenericDir struct {
@@ -109,25 +112,26 @@ type GenericDir struct {
 	action VirtualDirectory
 
 	basePath string
-	params genericDirParams
+	params   genericDirParams
 
 	lastError error
 }
 
 type paramsSpec struct {
-	contextName bool
+	contextName  bool
 	groupVersion bool
-	name bool
-	namespace bool
-	namespaced bool
-	pod bool
+	name         bool
+	namespace    bool
+	namespaced   bool
+	pod          bool
 
-	cli bool
+	cli        bool
 	stateStore bool
-	log bool
+	log        bool
+	lastError  bool
 }
 
-func checkParams (spec paramsSpec, params genericDirParams) error {
+func checkParams(spec paramsSpec, params genericDirParams) error {
 	missingValues := []string{}
 
 	if spec.contextName && params.contextName == "" {
@@ -157,10 +161,13 @@ func checkParams (spec paramsSpec, params genericDirParams) error {
 	if spec.namespaced && params.namespaced == nil {
 		missingValues = append(missingValues, "namespaced")
 	}
+	if spec.lastError && params.lastError == nil {
+		missingValues = append(missingValues, "lastError")
+	}
 	if len(missingValues) == 0 {
 		return nil
 	} else {
-		return fmt.Errorf("params was missing required values %v", missingValues)
+		return fmt.Errorf("params was missing required values %v | %w", missingValues, eParamsMissing)
 	}
 }
 
@@ -176,26 +183,40 @@ func (n *GenericDir) Readdir(ctx context.Context) (fs.DirStream, syscall.Errno) 
 }
 
 func (n *GenericDir) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	// TODO this is where we should intercept the Error and return a file containing the last error!
+	var node fs.InodeEmbedder
+	var err error
 	entryConstructor, mode, err := n.action.Entry(name, &n.params)
-	if err !=  nil {
-		n.lastError = err
+	if err != nil {
+		if errors.Is(err, eNoExists) {
+			return nil, syscall.ENOENT
+		}
+		n.params.lastError = err
 		n.params.log.Error(err)
-		panic("TODO")
-	}
-	n.params.name = name
-	node, err := entryConstructor(n.params)
-	if err !=  nil {
-		n.lastError = err
-		n.params.log.Error(err)
-		panic("TODO")
+
+		node, err = NewErrorFile(&n.params)
+		if err != nil {
+			n.params.log.Error("failure to make error file")
+			return nil, syscall.EREMOTEIO
+		}
+	} else {
+		n.params.name = name
+		node, err = entryConstructor(n.params)
+		if err != nil {
+			n.lastError = err
+			n.params.log.Error(err)
+			node, err = NewErrorFile(&n.params)
+			if err != nil {
+				n.params.log.Error("failure to make error file")
+				return nil, syscall.EREMOTEIO
+			}
+		}
 	}
 	ch := n.NewInode(
 		ctx,
 		node,
 		fs.StableAttr{
 			Mode: uint32(mode),
-			Ino: hash(fmt.Sprintf("%v/%v", n.basePath, name)),
+			Ino:  hash(fmt.Sprintf("%v/%v", n.basePath, name)),
 		},
 	)
 	return ch, 0

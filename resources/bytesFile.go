@@ -62,6 +62,15 @@ func (fh *rwBytesFileHandle) Fsync(ctx context.Context, flags uint32) syscall.Er
 
 // ========== Error file ==========
 
+func NewErrorFile(
+	params *genericDirParams,
+) (fs.InodeEmbedder, error) {
+	return &ErrorFile{
+		err:        params.lastError,
+		stateStore: params.stateStore,
+	}, nil
+}
+
 type ErrorFile struct {
 	fs.Inode
 
@@ -84,7 +93,6 @@ func (f *ErrorFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHandl
 // ============= Editable JSON File ==========
 //
 
-
 type editableJSONFileHandle struct {
 	content *unstructured.Unstructured
 
@@ -98,19 +106,18 @@ type editableJSONFileHandle struct {
 	lastError  error
 	cli        *k8s.Clientset
 	stateStore *State
-	log *zap.SugaredLogger
-
+	log        *zap.SugaredLogger
 }
 
 func NewEditableJSONFileHandle(
 	content *unstructured.Unstructured,
 
-	name         string,
-	namespace    string,
-	contextName  string,
+	name string,
+	namespace string,
+	contextName string,
 	groupVersion *GroupedAPIResource,
 
-	cli        *k8s.Clientset,
+	cli *k8s.Clientset,
 	stateStore *State,
 	log *zap.SugaredLogger,
 ) *editableJSONFileHandle {
@@ -119,20 +126,20 @@ func NewEditableJSONFileHandle(
 	}
 
 	return &editableJSONFileHandle{
-		content: content,
-		name: name,
-		namespace: namespace,
-		contextName: contextName,
+		content:      content,
+		name:         name,
+		namespace:    namespace,
+		contextName:  contextName,
 		groupVersion: groupVersion,
-		cli: cli,
-		stateStore: stateStore,
-		log: log,
+		cli:          cli,
+		stateStore:   stateStore,
+		log:          log,
 	}
 }
 
 type safeContent struct {
-	UnlockEdit bool `json:"unlockForEdit"`
-	Content *unstructured.Unstructured `json:"content"`
+	UnlockEdit bool                       `json:"unlockForEdit"`
+	Content    *unstructured.Unstructured `json:"content"`
 }
 
 func (fh *editableJSONFileHandle) GetSafeContent() ([]byte, error) {
