@@ -18,20 +18,13 @@ import (
 
 type RootContainerNode struct {
 	fs.Inode
-
-	pod         string
-	namespace   string
-	contextName string
-
-	cli        *k8s.Clientset
-	stateStore *State
-	log        *zap.SugaredLogger
 }
 
 func NewRootContainerNode(
 	params genericDirParams,
 ) (fs.InodeEmbedder, error) {
 	err := checkParams(paramsSpec{
+		cli:         true,
 		pod:         true,
 		namespace:   true,
 		contextName: true,
@@ -40,28 +33,24 @@ func NewRootContainerNode(
 		// TODO rc dont panic
 		panic(err)
 	}
+	basePath := fmt.Sprintf("%v/%v/pods/%v",
+		params.contextName, params.namespace, params.pod,
+	)
 
-	ensureClientSet(&params)
+	return &GenericDir{
+		action: &RootContainerNode{},
 
-	return &RootContainerNode{
-		pod:         params.pod,
-		namespace:   params.namespace,
-		contextName: params.contextName,
-
-		cli:        params.cli,
-		stateStore: params.stateStore,
-		log:        params.log,
+		params:   params,
+		basePath: basePath,
 	}, nil
 }
 
-func (n *RootContainerNode) Path() string {
-	return fmt.Sprintf("%v/%v/pods/%v",
-		n.contextName, n.namespace, n.pod,
-	)
-}
-
 func (n *RootContainerNode) Entries(ctx context.Context, params *genericDirParams) (*dirEntries, error) {
-	results, err := kube.GetContainers(ctx, n.cli, n.pod, n.namespace)
+	ensureClientSet(params)
+	if params.cli == nil {
+		panic("e nil cli")
+	}
+	results, err := kube.GetContainers(ctx, params.cli, params.pod, params.namespace)
 	if err != nil {
 		return nil, err
 	}
@@ -90,14 +79,6 @@ type RootContainerObjectsNode struct {
 }
 
 func NewRootContainerObjectsNode(
-	namespace string,
-	pod string,
-	name string,
-	contextName string,
-
-	cli *k8s.Clientset,
-	stateStore *State,
-	log *zap.SugaredLogger,
 	params genericDirParams,
 ) (fs.InodeEmbedder, error) {
 	err := checkParams(paramsSpec{
@@ -105,11 +86,15 @@ func NewRootContainerObjectsNode(
 		stateStore: true,
 		log:        true,
 	}, params)
+	if err != nil {
+		// TODO rc don't panic
+		panic(err)
+	}
 	basePath := fmt.Sprintf("%v/%v/pods/%v/%v",
-		n.contextName, n.namespace, n.pod, n.name,
+		params.contextName, params.namespace, params.pod, params.name,
 	)
 	return &GenericDir{
-		action:   &RootContainerNode{},
+		action:   &RootContainerObjectsNode{},
 		basePath: basePath,
 		params:   params,
 	}, nil
@@ -117,95 +102,101 @@ func NewRootContainerObjectsNode(
 
 func (n *RootContainerObjectsNode) Entries(ctx context.Context, params *genericDirParams) (*dirEntries, error) {
 	return &dirEntries{
-		Directories: []string{"logs", "logs-previous", "exec"},
+		// Directories: []string{"logs", "logs-previous", "exec"},
+		Directories: []string{"exec"},
 	}, nil
 }
 
-func (n *RootcontainerObjectsNode) Entry(name string, _ *genericDirParams) (NewNode, FileMode, error) {
-	if name == "exec" {
-
+func (n *RootContainerObjectsNode) Entry(name string, _ *genericDirParams) (NewNode, FileMode, error) {
+	switch name {
+	case "exec":
+		return NewContainerExecFile, fuse.S_IFREG, nil
+	default:
+		// should be returning this as an err val
+		//panic(fmt.Errorf("Unknown file: %v", name))
+		return nil, 0, eNoExists
 	}
 }
 
-// fetchContainerExecFile returns a new or existing container exec file from the stateStore.
-func (n *RootContainerObjectsNode) fetchContainerExecFile(ctx context.Context) *fs.Inode {
-	stateKey := fmt.Sprintf("%v/exec", n.Path())
+// // fetchContainerExecFile returns a new or existing container exec file from the stateStore.
+// func (n *RootContainerObjectsNode) fetchContainerExecFile(ctx context.Context) *fs.Inode {
+// 	stateKey := fmt.Sprintf("%v/exec", n.Path())
 
-	var node *ContainerExecFile
+// 	var node *ContainerExecFile
 
-	elem, exist := n.stateStore.Get(stateKey)
-	if exist {
-		var ok bool
-		node, ok = elem.(*ContainerExecFile)
-		if !ok {
-			panic("failed type assertion")
-		}
-	} else {
-		n.log.Debug("creating new container exec file",
-			zap.String("name", n.name),
-		)
+// 	elem, exist := n.stateStore.Get(stateKey)
+// 	if exist {
+// 		var ok bool
+// 		node, ok = elem.(*ContainerExecFile)
+// 		if !ok {
+// 			panic("failed type assertion")
+// 		}
+// 	} else {
+// 		n.log.Debug("creating new container exec file",
+// 			zap.String("name", n.name),
+// 		)
 
-		node = NewContainerExecFile(
-			n.name,
-			n.pod,
-			n.namespace,
-			n.contextName,
+// 		node = NewContainerExecFile(
+// 			n.name,
+// 			n.pod,
+// 			n.namespace,
+// 			n.contextName,
 
-			n.cli,
-			n.stateStore,
-			n.log,
-		)
-		n.stateStore.Put(stateKey, node)
-	}
+// 			n.cli,
+// 			n.stateStore,
+// 			n.log,
+// 		)
+// 		n.stateStore.Put(stateKey, node)
+// 	}
 
-	return n.NewInode(
-		ctx, node,
-		fs.StableAttr{
-			Mode: syscall.S_IFREG,
-			Ino:  hash(stateKey),
-		},
-	)
+// 	return n.NewInode(
+// 		ctx, node,
+// 		fs.StableAttr{
+// 			Mode: syscall.S_IFREG,
+// 			Ino:  hash(stateKey),
+// 		},
+// 	)
 
-}
+// }
 
-func (n *RootContainerObjectsNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
-	var previous bool
-	if name == "exec" {
-		ch := n.fetchContainerExecFile(ctx)
-		return ch, 0
-	}
-	if name == "logs" {
-		previous = false
-	} else if name == "logs-previous" {
-		previous = true
-	} else {
-		n.log.Error("RootContainerObjects lookup of unrecognised object type",
-			zap.String("name", name),
-		)
-		return nil, syscall.ENOENT
-	}
-	node, err := NewContainerLogsFile(
-		n.name, n.pod, n.namespace, previous, n.contextName,
-		n.cli, n.stateStore, n.log)
-	if node == nil {
-		panic("TODO")
-	}
-	if err != nil {
-		n.log.Error("RootContainerObjects error while constructing RootContainerLogsFile",
-			zap.String("name", name), zap.Error(err),
-		)
-		return nil, syscall.ENOENT
-	}
-	ch := n.NewInode(
-		ctx,
-		node,
-		fs.StableAttr{
-			Mode: syscall.S_IFREG,
-			Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
-		},
-	)
-	return ch, 0
-}
+// func (n *RootContainerObjectsNode) Lookup(ctx context.Context, name string, out *fuse.EntryOut) (*fs.Inode, syscall.Errno) {
+// var previous bool
+// if name == "exec" {
+// 	ch := n.fetchContainerExecFile(ctx)
+// 	return ch, 0
+// }
+// if name == "logs" {
+// 	previous = false
+// } else if name == "logs-previous" {
+// 	previous = true
+// } else {
+// 	n.log.Error("RootContainerObjects lookup of unrecognised object type",
+// 		zap.String("name", name),
+// 	)
+// 	return nil, syscall.ENOENT
+// }
+// node, err := NewContainerLogsFile(
+// 	n.name, n.pod, n.namespace, previous, n.contextName,
+// 	n.cli, n.stateStore, n.log)
+// if node == nil {
+// 	panic("TODO")
+// }
+// if err != nil {
+// 	n.log.Error("RootContainerObjects error while constructing RootContainerLogsFile",
+// 		zap.String("name", name), zap.Error(err),
+// 	)
+// 	return nil, syscall.ENOENT
+// }
+// ch := n.NewInode(
+// 	ctx,
+// 	node,
+// 	fs.StableAttr{
+// 		Mode: syscall.S_IFREG,
+// 		Ino:  hash(fmt.Sprintf("%v/%v", n.Path(), name)),
+// 	},
+// )
+// return ch, 0
+// }
 
 // ========== Container Logs file ==========
 
@@ -291,19 +282,11 @@ func (f *ContainerLogsFile) Open(ctx context.Context, openFlags uint32) (fh fs.F
 
 type ContainerExecFile struct {
 	fs.Inode
-	name        string
-	pod         string
-	namespace   string
-	contextName string
 
 	// When file systems are mutable, all access must use
 	// synchronization.
 	mu      sync.Mutex
 	content []byte
-
-	cli        *k8s.Clientset
-	stateStore *State
-	log        *zap.SugaredLogger
 }
 
 func NewContainerExecFile(
@@ -333,42 +316,47 @@ func NewContainerExecFile(
 		params.log.Debug("creating new container exec file",
 			zap.String("name", params.name),
 		)
-		node, err = NewContainerExecFile(params)
-		if err != nil {
-			// TODO rc: don't panic
-			panic(err)
-		}
+		// need to cache it
+		return &GenericFile{
+			action: &ContainerExecFile{},
+			// TODO rc stateKey is probably not correct here
+			basePath: stateKey,
+			params:   params,
+		}, nil
 	}
 	return node, nil
 
 }
 
 // Access reports whether a directory can be accessed by the caller.
-func (fdn *ContainerExecFile) Access(ctx context.Context, mask uint32) syscall.Errno {
+func (fdn *ContainerExecFile) Access(ctx context.Context, params *genericDirParams, mask uint32) syscall.Errno {
 	// TODO: parse the mask and return a more correct value instead of always
 	// granting permission.
 	return syscall.F_OK
 }
 
-func (f *ContainerExecFile) Open(ctx context.Context, openFlags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
+func (f *ContainerExecFile) Open(ctx context.Context, params *genericDirParams, openFlags uint32) (fh fs.FileHandle, fuseFlags uint32, errno syscall.Errno) {
 	fh = &rwBytesFileHandle{}
 
 	return fh, fuse.FOPEN_DIRECT_IO, 0
 }
 
-func (bn *ContainerExecFile) Write(ctx context.Context, fh fs.FileHandle, buf []byte, off int64) (uint32, syscall.Errno) {
+func (bn *ContainerExecFile) Write(ctx context.Context, params *genericDirParams, fh fs.FileHandle, buf []byte, off int64) (uint32, syscall.Errno) {
+	// TODO rc fragmenting the args here over the struct and args is unintuitive and should be reconsidered.
+
 	if off != 0 {
 		panic("TODO support exec large chunks.")
 	}
 
 	cmd := strings.Split(strings.TrimSpace(string(buf)), " ")
+	params.log.Info(zap.Strings("cmd", cmd))
 	stdOut, stdErr, err := kube.ExecCommand(
 		ctx,
-		bn.contextName,
-		bn.pod, bn.name, bn.namespace,
+		params.contextName,
+		params.pod, params.name, params.namespace,
 		cmd,
 	)
-	bn.log.Info(
+	params.log.Info(
 		zap.ByteString("stdout", stdOut),
 		zap.ByteString("stderr", stdErr),
 	)
@@ -394,7 +382,7 @@ func (bn *ContainerExecFile) Write(ctx context.Context, fh fs.FileHandle, buf []
 	return uint32(sz), 0
 }
 
-func (bn *ContainerExecFile) Read(ctx context.Context, fh fs.FileHandle, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
+func (bn *ContainerExecFile) Read(ctx context.Context, params *genericDirParams, fh fs.FileHandle, dest []byte, off int64) (fuse.ReadResult, syscall.Errno) {
 	bn.mu.Lock()
 	defer bn.mu.Unlock()
 

@@ -1,22 +1,21 @@
 package kubernetes
 
 import (
-	"fmt"
 	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
 	kube_errors "k8s.io/apimachinery/pkg/api/errors"
-	spdyStream "k8s.io/apimachinery/pkg/util/httpstream/spdy"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/rest"
+	spdyStream "k8s.io/apimachinery/pkg/util/httpstream/spdy"
 	"k8s.io/client-go/kubernetes"
 	k8s "k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/client-go/kubernetes/scheme"
-
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/remotecommand"
 )
 
 func GetPods(ctx context.Context, cli *k8s.Clientset, namespace string) ([]string, error) {
@@ -34,6 +33,11 @@ func GetPods(ctx context.Context, cli *k8s.Clientset, namespace string) ([]strin
 }
 
 func getPod(ctx context.Context, cli *k8s.Clientset, name, namespace string) (*corev1.Pod, error) {
+	// TODO remove
+	if cli == nil {
+		panic("nil cli")
+	}
+
 	pod, err := cli.CoreV1().Pods(namespace).Get(ctx, name, metav1.GetOptions{})
 	if kube_errors.IsNotFound(err) {
 		return nil, ErrNotFound
@@ -58,6 +62,9 @@ func GetPodDefinition(ctx context.Context, cli *k8s.Clientset, name, namespace s
 }
 
 func GetContainers(ctx context.Context, cli *k8s.Clientset, podName, namespace string) ([]string, error) {
+	if cli == nil {
+		panic("nil cli gcontaianers")
+	}
 	pod, err := getPod(ctx, cli, podName, namespace)
 	if err != nil {
 		return nil, err
@@ -79,11 +86,11 @@ func GetPreviousLogs(ctx context.Context, cli *k8s.Clientset, pod, container, na
 func getLogs(ctx context.Context, cli *k8s.Clientset, pod, container, namespace string, previous bool) ([]byte, error) {
 	rc, err := cli.CoreV1().Pods(namespace).GetLogs(
 		pod,
-		 &corev1.PodLogOptions{
-			 Container: container,
-			 Previous: previous,
-		 },
-		).Stream(ctx)
+		&corev1.PodLogOptions{
+			Container: container,
+			Previous:  previous,
+		},
+	).Stream(ctx)
 	if kube_errors.IsNotFound(err) {
 		return nil, ErrNotFound
 	}
@@ -99,9 +106,9 @@ func getLogs(ctx context.Context, cli *k8s.Clientset, pod, container, namespace 
 }
 
 func ExecCommand(ctx context.Context, contextName, pod, container, namespace string, cmd []string) ([]byte, []byte, error) {
-	if contextName != "microk8s" && contextName != "rancher-desktop" {
-		panic("disabling exec on real cluster!")
-	}
+	// if contextName != "microk8s" && contextName != "rancher-desktop" {
+	// 	panic(fmt.Errorf("disabling exec on real cluster - %v!", contextName))
+	// }
 	config, err := GetK8sClientConfig(contextName)
 	if err != nil {
 		return nil, nil, err
@@ -120,12 +127,12 @@ func ExecCommand(ctx context.Context, contextName, pod, container, namespace str
 		SubResource("exec").
 		Param("container", container).
 		VersionedParams(&corev1.PodExecOptions{
-			Command: cmd,
+			Command:   cmd,
 			Container: container,
-			Stdin: false,
-			Stdout: true,
-			Stderr: true,
-			TTY: false,
+			Stdin:     false,
+			Stdout:    true,
+			Stderr:    true,
+			TTY:       false,
 		}, scheme.ParameterCodec)
 
 	upgrader := spdyStream.NewRoundTripper(&tls.Config{InsecureSkipVerify: true})
@@ -140,10 +147,10 @@ func ExecCommand(ctx context.Context, contextName, pod, container, namespace str
 	}
 	var stdoutBuf, stderrBuf bytes.Buffer
 	err = exec.Stream(remotecommand.StreamOptions{
-		Stdin: nil,
+		Stdin:  nil,
 		Stdout: &stdoutBuf,
 		Stderr: &stderrBuf,
-		Tty: false,
+		Tty:    false,
 	})
 	if err != nil {
 		return nil, nil, err

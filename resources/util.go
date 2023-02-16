@@ -81,6 +81,29 @@ type VirtualDirectory interface {
 	Entry(string, *genericDirParams) (NewNode, FileMode, error)
 }
 
+type VirtualFile interface {
+	Access(ctx context.Context, params *genericDirParams, mask uint32) syscall.Errno
+	Read(ctx context.Context, params *genericDirParams, fh fs.FileHandle, buf []byte, offset int64) (fuse.ReadResult, syscall.Errno)
+	Write(ctx context.Context, params *genericDirParams, fh fs.FileHandle, buf []byte, offset int64) (uint32, syscall.Errno)
+	Open(ctx context.Context, params *genericDirParams, flags uint32) (fs.FileHandle, uint32, syscall.Errno)
+}
+
+func (n *GenericFile) Access(ctx context.Context, mask uint32) syscall.Errno {
+	return n.action.Access(ctx, &n.params, mask)
+}
+
+func (n *GenericFile) Read(ctx context.Context, fh fs.FileHandle, buf []byte, offset int64) (fuse.ReadResult, syscall.Errno) {
+	return n.action.Read(ctx, &n.params, fh, buf, offset)
+}
+
+func (n *GenericFile) Write(ctx context.Context, fh fs.FileHandle, buf []byte, offset int64) (uint32, syscall.Errno) {
+	return n.action.Write(ctx, &n.params, fh, buf, offset)
+}
+
+func (n *GenericFile) Open(ctx context.Context, flags uint32) (fs.FileHandle, uint32, syscall.Errno) {
+	return n.action.Open(ctx, &n.params, flags)
+}
+
 func getArg(name string, params map[string]string) (string, error) {
 	rv, exists := params[name]
 	if !exists {
@@ -109,13 +132,27 @@ type genericDirParams struct {
 
 // Identifier returns a stringified identifier for this set of params
 func (p *genericDirParams) Identifier() string {
+	gvr := ""
+	if p.groupVersion != nil {
+		gvr = p.groupVersion.GVR().String()
+	}
 	return fmt.Sprintf("%v/%v/%v/%v/%v",
 		p.contextName,
-		p.groupVersion.GVR().String(),
+		gvr,
 		p.namespace,
 		p.pod,
 		p.name,
 	)
+}
+
+type GenericFile struct {
+	fs.Inode
+	action VirtualFile
+
+	basePath string
+	params   genericDirParams
+
+	lastError error
 }
 
 type GenericDir struct {
